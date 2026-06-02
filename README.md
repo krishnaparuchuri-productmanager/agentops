@@ -1,4 +1,4 @@
-# AgentOps — Phase 1
+# AgentOps: Cradle to Grave
 
 A minimum viable **agent governance platform** managing exactly one agent: [SOP Deviation Review](https://krishnaparuchuri.com).
 

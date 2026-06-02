@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field
 from database import db, init_db
 from lifecycle import validate_transition, allowed_next_stages, TransitionError
 
-app = FastAPI(title="AgentOps", version="1.0.0")
+app = FastAPI(title="AgentOps: Cradle to Grave", version="1.0.0")
 
 # CORS — open for portfolio/demo use
 app.add_middleware(
