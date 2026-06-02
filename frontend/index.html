@@ -178,6 +178,35 @@ function fmtCost(n) {
   return "$" + Number(n).toFixed(4);
 }
 
+const PRODUCT_CATALOG = [
+  {
+    product: "GMP Deviation Review",
+    workflows: ["Pharmaceutical QA Team Review"],
+    domain: "Pharmaceutical"
+  },
+  {
+    product: "MedAssist",
+    workflows: [
+      "Voice-Transcribed SOAP Notes",
+      "LOINC-Mapped Diagnostic Orders",
+      "Lab Reports Trend Analysis",
+      "Auto-Generated ICD-10/CPT Claims",
+      "Clinical Workflow — Full Suite"
+    ],
+    domain: "Hospital Management System"
+  },
+  {
+    product: "FraudShield",
+    workflows: ["Fraud Detection"],
+    domain: "Finance"
+  },
+  {
+    product: "OmniOps",
+    workflows: ["Finance Assistance", "Operations Management", "Cross-Functional Intelligence"],
+    domain: "Cross-Industry"
+  }
+];
+
 const MODEL_OPTIONS = [
   { group: "Anthropic — Claude",   models: ["claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5", "claude-3-5-sonnet-20241022", "claude-3-opus-20240229", "claude-3-haiku-20240307"] },
   { group: "OpenAI",               models: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o1", "o1-mini", "o3-mini", "gpt-3.5-turbo"] },
@@ -403,18 +432,24 @@ function RegistryView({ onSelectAgent }) {
               <div className="grid-2" style={{gap:10}}>
                 <div className="form-group">
                   <label>Product</label>
-                  <input placeholder="e.g. Claims Processing" value={form.product}
-                    onChange={e => setForm({...form, product: e.target.value})} />
+                  <select value={form.product} onChange={e => {
+                    const cat = PRODUCT_CATALOG.find(c => c.product === e.target.value);
+                    setForm({...form, product: e.target.value, workflow: "", domain: cat ? cat.domain : ""});
+                  }}>
+                    <option value="">— select product —</option>
+                    {PRODUCT_CATALOG.map(c => <option key={c.product} value={c.product}>{c.product}</option>)}
+                  </select>
                 </div>
                 <div className="form-group">
                   <label>Workflow</label>
-                  <input placeholder="e.g. SOP Review" value={form.workflow}
-                    onChange={e => setForm({...form, workflow: e.target.value})} />
+                  <select value={form.workflow} onChange={e => setForm({...form, workflow: e.target.value})} disabled={!form.product}>
+                    <option value="">— select workflow —</option>
+                    {(PRODUCT_CATALOG.find(c => c.product === form.product)?.workflows || []).map(w => <option key={w} value={w}>{w}</option>)}
+                  </select>
                 </div>
                 <div className="form-group">
-                  <label>Domain</label>
-                  <input placeholder="e.g. Healthcare, Finance" value={form.domain}
-                    onChange={e => setForm({...form, domain: e.target.value})} />
+                  <label>Domain <span style={{fontWeight:400,color:"#aaa"}}>(auto-populated)</span></label>
+                  <input readOnly value={form.domain} style={{background:"#f8f9fa",color:"#555",cursor:"default"}} />
                 </div>
                 <div className="form-group">
                   <label>Environment</label>
@@ -500,6 +535,7 @@ function AgentDetailView({ agentId }) {
 
   const [transForm, setTransForm] = React.useState({ to_stage: "", reason: "", triggered_by: "Governance User" });
   const [monitoringConfig, setMonitoringConfig] = React.useState({ traffic_pct: 10, data_scope: "", start_date: "", end_date: "" });
+  const [standbyUntil, setStandbyUntil] = React.useState("");
   const [evalForm, setEvalForm] = React.useState({ version: "1.0.0", run_by: "Governance User", pass_rate: 0.87, avg_score: 6.67, total_cases: 15, passed_cases: 13, threshold_met: true });
   const [retireForm, setRetireForm] = React.useState({ proposed_by: "Governance User", reason: "", retirement_date: "" });
   const [submitting, setSubmitting] = React.useState(false);
@@ -544,6 +580,14 @@ function AgentDetailView({ agentId }) {
         const currentCls = typeof agent.classification === "string" ? JSON.parse(agent.classification) : (agent.classification || {});
         const { monitoring_config, ...rest } = currentCls;
         await apiFetch(`/agents/${agentId}`, { method: "PATCH", body: JSON.stringify({ classification: rest, actor: transForm.triggered_by }) });
+      }
+      // If moving to Deprecated, save standby_until date
+      if (transForm.to_stage === "Deprecated" && standbyUntil) {
+        const currentCls = typeof agent.classification === "string" ? JSON.parse(agent.classification) : (agent.classification || {});
+        await apiFetch(`/agents/${agentId}`, { method: "PATCH", body: JSON.stringify({
+          classification: { ...currentCls, standby_until: standbyUntil },
+          actor: transForm.triggered_by
+        })});
       }
       setActionMsg({ type: "success", text: `Moved to ${transForm.to_stage}` });
       setShowTransition(false);
@@ -705,6 +749,18 @@ function AgentDetailView({ agentId }) {
               </div>
             </div>
           </div>
+          {/* Deprecated Standby Config — visible only when Deprecated */}
+          {agent.current_stage === "Deprecated" && cls.standby_until && (
+            <div className="card" style={{marginTop:16, borderLeft:"4px solid #e03131"}}>
+              <div className="card-title" style={{marginBottom:12}}>⏸ Standby Mode — Wind-Down Period</div>
+              <div className="info-row">
+                <span className="info-label">Available Until</span>
+                <span style={{fontWeight:700, color:"#e03131"}}>{cls.standby_until}</span>
+              </div>
+              <div style={{fontSize:12,color:"#888",marginTop:8}}>Agent remains accessible in standby. No new onboarding. Teams should migrate workflows before this date.</div>
+            </div>
+          )}
+
           {/* Canary Monitoring Config — visible only when Under Monitoring */}
           {agent.current_stage === "Under Monitoring" && cls.monitoring_config && (
             <div className="card" style={{marginTop:16, borderLeft:"4px solid #fab005"}}>
@@ -904,19 +960,28 @@ function AgentDetailView({ agentId }) {
               <div className="grid-2" style={{gap:10}}>
                 <div className="form-group">
                   <label>Product</label>
-                  <input placeholder="e.g. Claims Processing" value={editForm.product} onChange={e => setEditForm({...editForm, product: e.target.value})} />
+                  <select value={editForm.product||""} onChange={e => {
+                    const cat = PRODUCT_CATALOG.find(c => c.product === e.target.value);
+                    setEditForm({...editForm, product: e.target.value, workflow: "", domain: cat ? cat.domain : ""});
+                  }}>
+                    <option value="">— select product —</option>
+                    {PRODUCT_CATALOG.map(c => <option key={c.product} value={c.product}>{c.product}</option>)}
+                  </select>
                 </div>
                 <div className="form-group">
                   <label>Workflow</label>
-                  <input placeholder="e.g. SOP Review" value={editForm.workflow} onChange={e => setEditForm({...editForm, workflow: e.target.value})} />
+                  <select value={editForm.workflow||""} onChange={e => setEditForm({...editForm, workflow: e.target.value})} disabled={!editForm.product}>
+                    <option value="">— select workflow —</option>
+                    {(PRODUCT_CATALOG.find(c => c.product === editForm.product)?.workflows || []).map(w => <option key={w} value={w}>{w}</option>)}
+                  </select>
                 </div>
                 <div className="form-group">
-                  <label>Domain</label>
-                  <input placeholder="e.g. Healthcare" value={editForm.domain} onChange={e => setEditForm({...editForm, domain: e.target.value})} />
+                  <label>Domain <span style={{fontWeight:400,color:"#aaa"}}>(auto-populated)</span></label>
+                  <input readOnly value={editForm.domain||""} style={{background:"#f8f9fa",color:"#555",cursor:"default"}} />
                 </div>
                 <div className="form-group">
                   <label>Environment</label>
-                  <select value={editForm.environment} onChange={e => setEditForm({...editForm, environment: e.target.value})}>
+                  <select value={editForm.environment||"production"} onChange={e => setEditForm({...editForm, environment: e.target.value})}>
                     <option value="production">Production</option>
                     <option value="staging">Staging</option>
                     <option value="development">Development</option>
@@ -973,7 +1038,7 @@ function AgentDetailView({ agentId }) {
 
       {/* Modal: Move Stage */}
       {showTransition && (
-        <Modal title="Move Lifecycle Stage" large={transForm.to_stage === "Under Monitoring"} onClose={() => setShowTransition(false)}>
+        <Modal title="Move Lifecycle Stage" large={["Under Monitoring","Deprecated"].includes(transForm.to_stage)} onClose={() => setShowTransition(false)}>
           <form onSubmit={doTransition}>
             <div className="alert alert-info" style={{marginBottom:14,fontSize:12}}>
               Current stage: <strong>{agent.current_stage}</strong> · Allowed next: {agent.allowed_transitions?.join(", ") || "none"}
@@ -993,6 +1058,20 @@ function AgentDetailView({ agentId }) {
               <label>Reason</label>
               <textarea value={transForm.reason} onChange={e => setTransForm({...transForm, reason: e.target.value})} />
             </div>
+
+            {/* Standby date — shown only when moving to Deprecated */}
+            {transForm.to_stage === "Deprecated" && (
+              <div>
+                <div className="section-label">⏸ Standby / Wind-Down Config</div>
+                <div className="alert alert-warn" style={{fontSize:12,marginBottom:14}}>
+                  The agent stays live in standby mode until this date, giving teams time to migrate. After this date it can be fully Retired.
+                </div>
+                <div className="form-group">
+                  <label>Standby Until (last day agent remains available)</label>
+                  <input type="date" value={standbyUntil} onChange={e => setStandbyUntil(e.target.value)} />
+                </div>
+              </div>
+            )}
 
             {/* Canary config — shown only when moving to Under Monitoring */}
             {transForm.to_stage === "Under Monitoring" && (
