@@ -38,11 +38,10 @@ from lifecycle import validate_transition, allowed_next_stages, TransitionError
 
 app = FastAPI(title="AgentOps", version="1.0.0")
 
-# CORS — allow configured origins or all (for local dev)
-ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "*").split(",")
+# CORS — open for portfolio/demo use
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
