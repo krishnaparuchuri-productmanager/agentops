@@ -1,0 +1,984 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AgentOps — Governance Platform</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f7fa; color: #1a1a2e; }
+
+    /* Nav */
+    .nav { background: #1a1a2e; color: #fff; padding: 0 24px; display: flex; align-items: center; height: 52px; gap: 32px; }
+    .nav-brand { font-weight: 700; font-size: 16px; letter-spacing: 0.5px; color: #7c9fff; }
+    .nav-link { color: #aab8d0; font-size: 14px; cursor: pointer; padding: 4px 0; border-bottom: 2px solid transparent; transition: all 0.15s; }
+    .nav-link:hover, .nav-link.active { color: #fff; border-bottom-color: #7c9fff; }
+
+    /* Layout */
+    .container { max-width: 1100px; margin: 0 auto; padding: 28px 24px; }
+    .page-title { font-size: 22px; font-weight: 700; margin-bottom: 20px; color: #1a1a2e; }
+
+    /* Cards */
+    .card { background: #fff; border-radius: 10px; padding: 20px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); margin-bottom: 16px; }
+    .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    .card-title { font-size: 15px; font-weight: 600; color: #1a1a2e; }
+
+    /* Stage badge */
+    .stage { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+    .stage-Proposed         { background: #e8e8f0; color: #555; }
+    .stage-Under-Review     { background: #fff3cd; color: #856404; }
+    .stage-Approved         { background: #d4edda; color: #155724; }
+    .stage-In-Production    { background: #cce5ff; color: #004085; }
+    .stage-Under-Monitoring { background: #fde8ff; color: #6f0080; }
+    .stage-Deprecated       { background: #f8d7da; color: #721c24; }
+    .stage-Retired          { background: #e2e2e2; color: #444; }
+
+    /* Grid */
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 20px; }
+
+    /* Stat box */
+    .stat-box { background: #fff; border-radius: 10px; padding: 16px 20px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+    .stat-label { font-size: 12px; color: #777; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .stat-value { font-size: 24px; font-weight: 700; color: #1a1a2e; }
+    .stat-sub { font-size: 12px; color: #888; margin-top: 2px; }
+
+    /* Table */
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; padding: 8px 12px; color: #777; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid #f0f0f0; }
+    td { padding: 10px 12px; border-bottom: 1px solid #f5f5f5; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #fafbff; }
+
+    /* Buttons */
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: none; transition: all 0.15s; }
+    .btn-primary { background: #3b5bdb; color: #fff; }
+    .btn-primary:hover { background: #2f4ac5; }
+    .btn-success { background: #2f9e44; color: #fff; }
+    .btn-success:hover { background: #268a3a; }
+    .btn-danger  { background: #e03131; color: #fff; }
+    .btn-danger:hover { background: #c92a2a; }
+    .btn-outline { background: transparent; color: #3b5bdb; border: 1.5px solid #3b5bdb; }
+    .btn-outline:hover { background: #eef1ff; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+
+    /* Forms */
+    .form-group { margin-bottom: 14px; }
+    label { display: block; font-size: 12px; font-weight: 600; color: #555; margin-bottom: 5px; }
+    input, textarea, select { width: 100%; padding: 8px 10px; border: 1.5px solid #dde; border-radius: 6px; font-size: 13px; font-family: inherit; }
+    input:focus, textarea:focus, select:focus { outline: none; border-color: #3b5bdb; }
+    textarea { resize: vertical; min-height: 70px; }
+
+    /* Audit log */
+    .audit-row { font-size: 12px; font-family: 'SF Mono', 'Fira Code', monospace; }
+    .audit-action { font-weight: 700; color: #1a1a2e; }
+    .audit-meta { color: #888; margin-top: 2px; }
+
+    /* Decision badge */
+    .decision-approved { color: #2f9e44; font-weight: 600; }
+    .decision-rejected { color: #e03131; font-weight: 600; }
+    .decision-pending  { color: #e67700; font-weight: 600; }
+
+    /* Lifecycle stepper */
+    .stepper { display: flex; align-items: center; gap: 0; margin-bottom: 24px; overflow-x: auto; padding: 8px 0; }
+    .step { display: flex; align-items: center; }
+    .step-dot { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; }
+    .step-dot-done    { background: #2f9e44; color: #fff; }
+    .step-dot-current { background: #3b5bdb; color: #fff; box-shadow: 0 0 0 3px #bec8f7; }
+    .step-dot-future  { background: #e8e8f0; color: #aaa; }
+    .step-label { font-size: 10px; font-weight: 600; margin-top: 4px; color: #888; text-align: center; white-space: nowrap; }
+    .step-wrap { display: flex; flex-direction: column; align-items: center; }
+    .step-line { width: 32px; height: 2px; background: #e0e0e0; flex-shrink: 0; }
+    .step-line-done { background: #2f9e44; }
+
+    /* Alert */
+    .alert { padding: 10px 14px; border-radius: 6px; font-size: 13px; margin-bottom: 14px; }
+    .alert-info    { background: #e7f5ff; color: #1864ab; border-left: 3px solid #228be6; }
+    .alert-success { background: #ebfbee; color: #1b4332; border-left: 3px solid #2f9e44; }
+    .alert-error   { background: #fff5f5; color: #7b1c1c; border-left: 3px solid #e03131; }
+    .alert-warn    { background: #fff9db; color: #5c3d11; border-left: 3px solid #fab005; }
+
+    /* Loading */
+    .loading { text-align: center; padding: 40px; color: #888; font-size: 14px; }
+    .empty { text-align: center; padding: 32px; color: #bbb; font-size: 13px; }
+
+    /* Eval bar */
+    .eval-bar-bg { background: #f0f0f0; border-radius: 4px; height: 8px; margin-top: 4px; }
+    .eval-bar { height: 8px; border-radius: 4px; background: #3b5bdb; }
+
+    /* Modal overlay */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; display: flex; align-items: center; justify-content: center; }
+    .modal { background: #fff; border-radius: 12px; padding: 28px; width: 480px; max-width: 95vw; box-shadow: 0 8px 40px rgba(0,0,0,0.2); }
+    .modal-title { font-size: 17px; font-weight: 700; margin-bottom: 18px; }
+    .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+
+    .clickable { cursor: pointer; color: #3b5bdb; font-weight: 500; }
+    .clickable:hover { text-decoration: underline; }
+
+    .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; background: #eef1ff; color: #3b5bdb; margin-right: 4px; }
+    .tag-red { background: #fff5f5; color: #e03131; }
+    .tag-green { background: #ebfbee; color: #2f9e44; }
+  </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel">
+const API = "http://localhost:8000";
+
+// ── Utils ──────────────────────────────────────────────────────────────────
+
+async function apiFetch(path, options = {}) {
+  const res = await fetch(API + path, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Request failed");
+  }
+  return res.json();
+}
+
+function stageCssClass(stage) {
+  return "stage stage-" + (stage || "").replace(/\s+/g, "-");
+}
+
+function fmtDate(iso) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function fmtCost(n) {
+  if (n == null) return "—";
+  return "$" + Number(n).toFixed(4);
+}
+
+const STAGE_ORDER = [
+  "Proposed", "Under Review", "Approved", "In Production",
+  "Under Monitoring", "Deprecated", "Retired"
+];
+
+// ── Lifecycle Stepper ──────────────────────────────────────────────────────
+
+function LifecycleStepper({ current }) {
+  const idx = STAGE_ORDER.indexOf(current);
+  return (
+    <div className="stepper">
+      {STAGE_ORDER.map((s, i) => (
+        <div key={s} className="step">
+          <div className="step-wrap">
+            <div className={`step-dot ${i < idx ? "step-dot-done" : i === idx ? "step-dot-current" : "step-dot-future"}`}>
+              {i < idx ? "✓" : i + 1}
+            </div>
+            <div className="step-label">{s}</div>
+          </div>
+          {i < STAGE_ORDER.length - 1 && (
+            <div className={`step-line ${i < idx ? "step-line-done" : ""}`} />
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Modal ─────────────────────────────────────────────────────────────────
+
+function Modal({ title, onClose, children }) {
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal">
+        <div className="modal-title">{title}</div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ── Registry View ─────────────────────────────────────────────────────────
+
+function RegistryView({ onSelectAgent }) {
+  const [agents, setAgents] = React.useState(null);
+  const [error, setError] = React.useState(null);
+  const [showRegister, setShowRegister] = React.useState(false);
+  const [form, setForm] = React.useState({ id: "", name: "", description: "", owner: "" });
+  const [submitting, setSubmitting] = React.useState(false);
+  const [msg, setMsg] = React.useState(null);
+
+  async function load() {
+    try {
+      const data = await apiFetch("/agents");
+      setAgents(data);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  React.useEffect(() => { load(); }, []);
+
+  async function handleRegister(e) {
+    e.preventDefault();
+    setSubmitting(true);
+    setMsg(null);
+    try {
+      await apiFetch("/agents", { method: "POST", body: JSON.stringify({ ...form, actor: "Governance User" }) });
+      setMsg({ type: "success", text: `Agent '${form.name}' registered.` });
+      setShowRegister(false);
+      setForm({ id: "", name: "", description: "", owner: "" });
+      load();
+    } catch (e) {
+      setMsg({ type: "error", text: e.message });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (error) return <div className="alert alert-error">Failed to load agents: {error}</div>;
+  if (!agents) return <div className="loading">Loading registry…</div>;
+
+  return (
+    <div>
+      <div className="page-title">Agent Registry</div>
+
+      {msg && <div className={`alert alert-${msg.type}`}>{msg.text}</div>}
+
+      <div className="grid-3">
+        <div className="stat-box">
+          <div className="stat-label">Total Agents</div>
+          <div className="stat-value">{agents.length}</div>
+          <div className="stat-sub">Phase 1: 1 managed agent</div>
+        </div>
+        <div className="stat-box">
+          <div className="stat-label">In Production</div>
+          <div className="stat-value">{agents.filter(a => a.current_stage === "In Production").length}</div>
+        </div>
+        <div className="stat-box">
+          <div className="stat-label">Pending Review</div>
+          <div className="stat-value">{agents.filter(a => ["Proposed","Under Review"].includes(a.current_stage)).length}</div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-header">
+          <div className="card-title">Managed Agents</div>
+          <button className="btn btn-primary btn-sm" onClick={() => setShowRegister(true)}>+ Register Agent</button>
+        </div>
+        {agents.length === 0 ? (
+          <div className="empty">No agents registered yet.</div>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Agent</th>
+                <th>Owner</th>
+                <th>Stage</th>
+                <th>Classification</th>
+                <th>Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              {agents.map(a => {
+                const cls = typeof a.classification === "string" ? JSON.parse(a.classification) : a.classification;
+                return (
+                  <tr key={a.id}>
+                    <td>
+                      <span className="clickable" onClick={() => onSelectAgent(a.id)}>{a.name}</span>
+                      <div style={{fontSize:11,color:"#aaa",marginTop:2}}>{a.id}</div>
+                    </td>
+                    <td style={{fontSize:12}}>{a.owner}</td>
+                    <td><span className={stageCssClass(a.current_stage)}>{a.current_stage}</span></td>
+                    <td>
+                      {cls.production_critical && <span className="tag tag-red">prod-critical</span>}
+                      {cls.pii_access && <span className="tag tag-red">PII</span>}
+                      {cls.regulated_domain && <span className="tag">regulated</span>}
+                      {cls.escalates_to_human && <span className="tag tag-green">human-gated</span>}
+                    </td>
+                    <td style={{fontSize:12,color:"#888"}}>{fmtDate(a.updated_at)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {showRegister && (
+        <Modal title="Register New Agent" onClose={() => setShowRegister(false)}>
+          <form onSubmit={handleRegister}>
+            <div className="form-group">
+              <label>Agent ID (slug)</label>
+              <input required placeholder="e.g. sop-deviation-review" value={form.id}
+                onChange={e => setForm({...form, id: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g,"-")})} />
+            </div>
+            <div className="form-group">
+              <label>Name</label>
+              <input required placeholder="Human-readable name" value={form.name}
+                onChange={e => setForm({...form, name: e.target.value})} />
+            </div>
+            <div className="form-group">
+              <label>Owner</label>
+              <input required placeholder="Team or person" value={form.owner}
+                onChange={e => setForm({...form, owner: e.target.value})} />
+            </div>
+            <div className="form-group">
+              <label>Description</label>
+              <textarea placeholder="What does this agent do?" value={form.description}
+                onChange={e => setForm({...form, description: e.target.value})} />
+            </div>
+            {msg && <div className={`alert alert-${msg.type}`}>{msg.text}</div>}
+            <div className="modal-actions">
+              <button type="button" className="btn btn-outline" onClick={() => setShowRegister(false)}>Cancel</button>
+              <button type="submit" className="btn btn-primary" disabled={submitting}>
+                {submitting ? "Registering…" : "Register"}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ── Agent Detail View ─────────────────────────────────────────────────────
+
+function AgentDetailView({ agentId }) {
+  const [agent, setAgent] = React.useState(null);
+  const [evals, setEvals] = React.useState([]);
+  const [costs, setCosts] = React.useState(null);
+  const [auditLog, setAuditLog] = React.useState([]);
+  const [approvals, setApprovals] = React.useState([]);
+  const [error, setError] = React.useState(null);
+  const [tab, setTab] = React.useState("overview");
+
+  // Modals
+  const [showTransition, setShowTransition] = React.useState(false);
+  const [showEval, setShowEval] = React.useState(false);
+  const [showRetire, setShowRetire] = React.useState(false);
+  const [actionMsg, setActionMsg] = React.useState(null);
+
+  const [transForm, setTransForm] = React.useState({ to_stage: "", reason: "", triggered_by: "Governance User" });
+  const [evalForm, setEvalForm] = React.useState({ version: "1.0.0", run_by: "Governance User", pass_rate: 0.87, avg_score: 6.67, total_cases: 15, passed_cases: 13, threshold_met: true });
+  const [retireForm, setRetireForm] = React.useState({ proposed_by: "Governance User", reason: "", retirement_date: "" });
+  const [submitting, setSubmitting] = React.useState(false);
+
+  async function load() {
+    try {
+      const [a, ev, cs, al, ap] = await Promise.all([
+        apiFetch(`/agents/${agentId}`),
+        apiFetch(`/agents/${agentId}/evals`),
+        apiFetch(`/agents/${agentId}/costs`),
+        apiFetch(`/agents/${agentId}/audit`),
+        apiFetch(`/agents/${agentId}/approvals`),
+      ]);
+      setAgent(a);
+      setEvals(ev);
+      setCosts(cs);
+      setAuditLog(al);
+      setApprovals(ap);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  React.useEffect(() => { load(); }, [agentId]);
+
+  async function doTransition(e) {
+    e.preventDefault();
+    setSubmitting(true);
+    setActionMsg(null);
+    try {
+      await apiFetch(`/agents/${agentId}/transitions`, { method: "POST", body: JSON.stringify(transForm) });
+      setActionMsg({ type: "success", text: `Moved to ${transForm.to_stage}` });
+      setShowTransition(false);
+      load();
+    } catch (e) {
+      setActionMsg({ type: "error", text: e.message });
+    } finally { setSubmitting(false); }
+  }
+
+  async function submitEval(e) {
+    e.preventDefault();
+    setSubmitting(true);
+    setActionMsg(null);
+    try {
+      await apiFetch(`/agents/${agentId}/evals`, { method: "POST", body: JSON.stringify({
+        ...evalForm,
+        pass_rate: parseFloat(evalForm.pass_rate),
+        avg_score: parseFloat(evalForm.avg_score),
+        total_cases: parseInt(evalForm.total_cases),
+        passed_cases: parseInt(evalForm.passed_cases),
+      })});
+      setActionMsg({ type: "success", text: "Eval result recorded." });
+      setShowEval(false);
+      load();
+    } catch (e) {
+      setActionMsg({ type: "error", text: e.message });
+    } finally { setSubmitting(false); }
+  }
+
+  async function submitRetire(e) {
+    e.preventDefault();
+    setSubmitting(true);
+    setActionMsg(null);
+    try {
+      await apiFetch(`/agents/${agentId}/retire`, { method: "POST", body: JSON.stringify(retireForm) });
+      setActionMsg({ type: "success", text: "Retirement proposed. Awaiting governance approval." });
+      setShowRetire(false);
+      load();
+    } catch (e) {
+      setActionMsg({ type: "error", text: e.message });
+    } finally { setSubmitting(false); }
+  }
+
+  if (error) return <div className="alert alert-error">{error}</div>;
+  if (!agent) return <div className="loading">Loading agent…</div>;
+
+  const cls = typeof agent.classification === "string" ? JSON.parse(agent.classification) : agent.classification;
+  const latestEval = agent.latest_eval;
+  const cost30d = agent.cost_30d;
+
+  return (
+    <div>
+      <div style={{display:"flex", alignItems:"center", gap:14, marginBottom:20}}>
+        <div>
+          <div className="page-title" style={{marginBottom:4}}>{agent.name}</div>
+          <div style={{fontSize:12,color:"#888"}}>{agent.id} · owner: {agent.owner}</div>
+        </div>
+        <span className={stageCssClass(agent.current_stage)} style={{fontSize:13}}>{agent.current_stage}</span>
+        <div style={{marginLeft:"auto", display:"flex", gap:8}}>
+          <button className="btn btn-outline btn-sm" onClick={() => setShowTransition(true)}>Move Stage</button>
+          <button className="btn btn-primary btn-sm" onClick={() => setShowEval(true)}>Submit Eval</button>
+          {["In Production","Under Monitoring","Deprecated"].includes(agent.current_stage) && (
+            <button className="btn btn-danger btn-sm" onClick={() => setShowRetire(true)}>Propose Retirement</button>
+          )}
+        </div>
+      </div>
+
+      {actionMsg && <div className={`alert alert-${actionMsg.type}`}>{actionMsg.text}</div>}
+
+      <LifecycleStepper current={agent.current_stage} />
+
+      {/* Summary stats */}
+      <div className="grid-3">
+        <div className="stat-box">
+          <div className="stat-label">Pass Rate (Latest Eval)</div>
+          <div className="stat-value">{latestEval ? (latestEval.pass_rate * 100).toFixed(0) + "%" : "—"}</div>
+          <div className="stat-sub">{latestEval ? `${latestEval.passed_cases}/${latestEval.total_cases} cases` : "No evals yet"}</div>
+        </div>
+        <div className="stat-box">
+          <div className="stat-label">Avg Score (Latest)</div>
+          <div className="stat-value">{latestEval ? latestEval.avg_score.toFixed(2) : "—"}</div>
+          <div className="stat-sub">{latestEval ? (latestEval.threshold_met ? "✓ Threshold met" : "✗ Below threshold") : ""}</div>
+        </div>
+        <div className="stat-box">
+          <div className="stat-label">Cost (30d)</div>
+          <div className="stat-value">{cost30d?.total_cost_usd != null ? fmtCost(cost30d.total_cost_usd) : "—"}</div>
+          <div className="stat-sub">{cost30d?.total_reviews ? `${cost30d.total_reviews} reviews` : ""}</div>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div style={{display:"flex", gap:2, marginBottom:16, borderBottom:"2px solid #eee"}}>
+        {["overview","evals","costs","approvals","audit"].map(t => (
+          <button key={t} onClick={() => setTab(t)}
+            style={{padding:"8px 16px", background:"none", border:"none", cursor:"pointer",
+              borderBottom: tab===t ? "2px solid #3b5bdb" : "2px solid transparent",
+              color: tab===t ? "#3b5bdb" : "#888", fontWeight: tab===t ? 600 : 400,
+              fontSize:13, marginBottom:"-2px"}}>
+            {t.charAt(0).toUpperCase() + t.slice(1)}
+            {t==="approvals" && approvals.filter(a=>!a.decision).length > 0 &&
+              <span style={{background:"#e03131",color:"#fff",borderRadius:8,padding:"1px 6px",fontSize:10,marginLeft:6}}>
+                {approvals.filter(a=>!a.decision).length}
+              </span>}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab: Overview */}
+      {tab === "overview" && (
+        <div className="grid-2">
+          <div className="card">
+            <div className="card-title" style={{marginBottom:12}}>Classification</div>
+            <table>
+              <tbody>
+                {Object.entries(cls).map(([k, v]) => (
+                  <tr key={k}>
+                    <td style={{fontSize:12,color:"#888",width:"50%"}}>{k.replace(/_/g," ")}</td>
+                    <td style={{fontSize:12}}>
+                      {typeof v === "boolean"
+                        ? <span style={{color: v ? "#2f9e44" : "#e03131"}}>{v ? "Yes" : "No"}</span>
+                        : v}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="card">
+            <div className="card-title" style={{marginBottom:12}}>Description</div>
+            <p style={{fontSize:13,color:"#444",lineHeight:1.6}}>{agent.description}</p>
+            <div style={{marginTop:16,fontSize:12,color:"#888"}}>
+              Registered {fmtDate(agent.created_at)} · Pending approvals: {agent.pending_approvals}
+            </div>
+            <div style={{marginTop:8,fontSize:12,color:"#555"}}>
+              <strong>Allowed transitions:</strong>{" "}
+              {agent.allowed_transitions?.length > 0
+                ? agent.allowed_transitions.join(", ")
+                : "None (terminal state)"}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tab: Evals */}
+      {tab === "evals" && (
+        <div className="card">
+          <div className="card-header">
+            <div className="card-title">Eval Results</div>
+            <button className="btn btn-primary btn-sm" onClick={() => setShowEval(true)}>Submit Eval Run</button>
+          </div>
+          {evals.length === 0 ? <div className="empty">No eval results yet.</div> : (
+            <table>
+              <thead><tr><th>Version</th><th>Run At</th><th>Pass Rate</th><th>Avg Score</th><th>Cases</th><th>Threshold</th><th>Run By</th></tr></thead>
+              <tbody>
+                {evals.map(ev => (
+                  <tr key={ev.id}>
+                    <td><span className="tag">{ev.version}</span></td>
+                    <td style={{fontSize:12,color:"#888"}}>{fmtDate(ev.run_at)}</td>
+                    <td>
+                      <div>{(ev.pass_rate * 100).toFixed(0)}%</div>
+                      <div className="eval-bar-bg"><div className="eval-bar" style={{width: (ev.pass_rate*100)+"%"}} /></div>
+                    </td>
+                    <td>{ev.avg_score.toFixed(2)}</td>
+                    <td style={{fontSize:12}}>{ev.passed_cases}/{ev.total_cases}</td>
+                    <td>
+                      {ev.threshold_met
+                        ? <span className="decision-approved">✓ Met</span>
+                        : <span className="decision-rejected">✗ Not met</span>}
+                    </td>
+                    <td style={{fontSize:12,color:"#888"}}>{ev.run_by}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* Tab: Costs */}
+      {tab === "costs" && (
+        <div>
+          {costs?.summary && (
+            <div className="grid-3" style={{marginBottom:16}}>
+              <div className="stat-box">
+                <div className="stat-label">Total Cost (30d)</div>
+                <div className="stat-value">{fmtCost(costs.summary.total_cost_usd)}</div>
+              </div>
+              <div className="stat-box">
+                <div className="stat-label">Total Tokens (30d)</div>
+                <div className="stat-value">{costs.summary.total_tokens?.toLocaleString() ?? "—"}</div>
+              </div>
+              <div className="stat-box">
+                <div className="stat-label">Cost per Review</div>
+                <div className="stat-value">{fmtCost(costs.summary.cost_per_review)}</div>
+                <div className="stat-sub">{costs.summary.total_reviews} reviews</div>
+              </div>
+            </div>
+          )}
+          <div className="card">
+            <div className="card-title" style={{marginBottom:12}}>Daily Cost Records</div>
+            {!costs?.daily?.length ? <div className="empty">No cost data.</div> : (
+              <table>
+                <thead><tr><th>Date</th><th>Reviews</th><th>Total Tokens</th><th>Input</th><th>Output</th><th>Cost</th></tr></thead>
+                <tbody>
+                  {costs.daily.map(r => (
+                    <tr key={r.id}>
+                      <td style={{fontSize:12}}>{r.recorded_date}</td>
+                      <td>{r.review_count}</td>
+                      <td style={{fontSize:12}}>{r.total_tokens?.toLocaleString()}</td>
+                      <td style={{fontSize:12,color:"#888"}}>{r.input_tokens?.toLocaleString()}</td>
+                      <td style={{fontSize:12,color:"#888"}}>{r.output_tokens?.toLocaleString()}</td>
+                      <td>{fmtCost(r.cost_usd)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Tab: Approvals */}
+      {tab === "approvals" && (
+        <div className="card">
+          <div className="card-title" style={{marginBottom:12}}>Approval Requests</div>
+          {approvals.length === 0 ? <div className="empty">No approval requests.</div> : (
+            <table>
+              <thead><tr><th>Type</th><th>Transition</th><th>Proposed By</th><th>Proposed At</th><th>Decision</th><th>Reviewed By</th></tr></thead>
+              <tbody>
+                {approvals.map(ap => (
+                  <tr key={ap.id}>
+                    <td><span className="tag">{ap.request_type}</span></td>
+                    <td style={{fontSize:12}}>{ap.from_stage} → {ap.to_stage}</td>
+                    <td style={{fontSize:12}}>{ap.proposed_by}</td>
+                    <td style={{fontSize:12,color:"#888"}}>{fmtDate(ap.proposed_at)}</td>
+                    <td>
+                      {!ap.decision
+                        ? <span className="decision-pending">Pending</span>
+                        : ap.decision === "approved"
+                          ? <span className="decision-approved">Approved</span>
+                          : <span className="decision-rejected">Rejected</span>}
+                    </td>
+                    <td style={{fontSize:12,color:"#888"}}>{ap.reviewed_by || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* Tab: Audit */}
+      {tab === "audit" && (
+        <div className="card">
+          <div className="card-title" style={{marginBottom:12}}>Immutable Audit Log</div>
+          <div className="alert alert-info" style={{marginBottom:12,fontSize:12}}>
+            Every governance action is recorded here. These entries cannot be edited or deleted.
+          </div>
+          {auditLog.length === 0 ? <div className="empty">No audit entries.</div> : (
+            <table>
+              <thead><tr><th>Time</th><th>Action</th><th>Actor</th><th>Details</th></tr></thead>
+              <tbody>
+                {auditLog.map(e => (
+                  <tr key={e.id} className="audit-row">
+                    <td style={{fontSize:11,color:"#888",whiteSpace:"nowrap"}}>{fmtDate(e.event_time)}</td>
+                    <td><span className="audit-action">{e.action}</span></td>
+                    <td style={{fontSize:12}}>{e.actor}</td>
+                    <td style={{fontSize:11,color:"#666",maxWidth:300}}>
+                      <code>{JSON.stringify(e.payload)}</code>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* Modal: Move Stage */}
+      {showTransition && (
+        <Modal title="Move Lifecycle Stage" onClose={() => setShowTransition(false)}>
+          <form onSubmit={doTransition}>
+            <div className="alert alert-info" style={{marginBottom:14,fontSize:12}}>
+              Current stage: <strong>{agent.current_stage}</strong> · Allowed next: {agent.allowed_transitions?.join(", ") || "none"}
+            </div>
+            <div className="form-group">
+              <label>Target Stage</label>
+              <select required value={transForm.to_stage} onChange={e => setTransForm({...transForm, to_stage: e.target.value})}>
+                <option value="">— select —</option>
+                {(agent.allowed_transitions || []).map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Triggered By</label>
+              <input value={transForm.triggered_by} onChange={e => setTransForm({...transForm, triggered_by: e.target.value})} />
+            </div>
+            <div className="form-group">
+              <label>Reason</label>
+              <textarea value={transForm.reason} onChange={e => setTransForm({...transForm, reason: e.target.value})} />
+            </div>
+            {actionMsg && <div className={`alert alert-${actionMsg.type}`}>{actionMsg.text}</div>}
+            <div className="modal-actions">
+              <button type="button" className="btn btn-outline" onClick={() => setShowTransition(false)}>Cancel</button>
+              <button type="submit" className="btn btn-primary" disabled={submitting}>{submitting ? "Moving…" : "Move Stage"}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* Modal: Submit Eval */}
+      {showEval && (
+        <Modal title="Submit Eval Result" onClose={() => setShowEval(false)}>
+          <form onSubmit={submitEval}>
+            <div className="grid-2" style={{gap:10}}>
+              <div className="form-group">
+                <label>Version</label>
+                <input value={evalForm.version} onChange={e => setEvalForm({...evalForm, version: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label>Run By</label>
+                <input value={evalForm.run_by} onChange={e => setEvalForm({...evalForm, run_by: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label>Pass Rate (0–1)</label>
+                <input type="number" step="0.01" min="0" max="1" value={evalForm.pass_rate}
+                  onChange={e => setEvalForm({...evalForm, pass_rate: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label>Avg Score</label>
+                <input type="number" step="0.01" value={evalForm.avg_score}
+                  onChange={e => setEvalForm({...evalForm, avg_score: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label>Total Cases</label>
+                <input type="number" value={evalForm.total_cases}
+                  onChange={e => setEvalForm({...evalForm, total_cases: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label>Passed Cases</label>
+                <input type="number" value={evalForm.passed_cases}
+                  onChange={e => setEvalForm({...evalForm, passed_cases: e.target.value})} />
+              </div>
+            </div>
+            <div className="form-group">
+              <label>
+                <input type="checkbox" checked={evalForm.threshold_met}
+                  onChange={e => setEvalForm({...evalForm, threshold_met: e.target.checked})}
+                  style={{width:"auto",marginRight:8}} />
+                Threshold met
+              </label>
+            </div>
+            {actionMsg && <div className={`alert alert-${actionMsg.type}`}>{actionMsg.text}</div>}
+            <div className="modal-actions">
+              <button type="button" className="btn btn-outline" onClick={() => setShowEval(false)}>Cancel</button>
+              <button type="submit" className="btn btn-primary" disabled={submitting}>{submitting ? "Submitting…" : "Submit Eval"}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* Modal: Propose Retirement */}
+      {showRetire && (
+        <Modal title="Propose Retirement" onClose={() => setShowRetire(false)}>
+          <div className="alert alert-warn" style={{marginBottom:14,fontSize:12}}>
+            This creates a retirement approval request. A governance lead must approve before the stage changes.
+          </div>
+          <form onSubmit={submitRetire}>
+            <div className="form-group">
+              <label>Proposed By</label>
+              <input value={retireForm.proposed_by} onChange={e => setRetireForm({...retireForm, proposed_by: e.target.value})} />
+            </div>
+            <div className="form-group">
+              <label>Reason</label>
+              <textarea required value={retireForm.reason} onChange={e => setRetireForm({...retireForm, reason: e.target.value})}
+                placeholder="Why is this agent being retired?" />
+            </div>
+            <div className="form-group">
+              <label>Proposed Retirement Date (optional)</label>
+              <input type="date" value={retireForm.retirement_date}
+                onChange={e => setRetireForm({...retireForm, retirement_date: e.target.value})} />
+            </div>
+            {actionMsg && <div className={`alert alert-${actionMsg.type}`}>{actionMsg.text}</div>}
+            <div className="modal-actions">
+              <button type="button" className="btn btn-outline" onClick={() => setShowRetire(false)}>Cancel</button>
+              <button type="submit" className="btn btn-danger" disabled={submitting}>{submitting ? "Proposing…" : "Propose Retirement"}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ── Governance Queue View ─────────────────────────────────────────────────
+
+function GovernanceQueueView({ onSelectAgent }) {
+  const [requests, setRequests] = React.useState(null);
+  const [auditLog, setAuditLog] = React.useState([]);
+  const [error, setError] = React.useState(null);
+  const [decideModal, setDecideModal] = React.useState(null); // {agentId, reqId, req}
+  const [decideForm, setDecideForm] = React.useState({ decision: "approved", reviewed_by: "Governance Lead", reason: "" });
+  const [submitting, setSubmitting] = React.useState(false);
+  const [msg, setMsg] = React.useState(null);
+
+  async function load() {
+    try {
+      // Load all agents, get their pending approvals
+      const agents = await apiFetch("/agents");
+      const all = [];
+      await Promise.all(agents.map(async a => {
+        const reqs = await apiFetch(`/agents/${a.id}/approvals?pending_only=true`);
+        reqs.forEach(r => all.push({ ...r, agent_name: a.name, agent_id: a.id }));
+      }));
+      all.sort((a, b) => new Date(b.proposed_at) - new Date(a.proposed_at));
+      setRequests(all);
+
+      const log = await apiFetch("/audit?limit=30");
+      setAuditLog(log);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  React.useEffect(() => { load(); }, []);
+
+  async function doDecide(e) {
+    e.preventDefault();
+    setSubmitting(true);
+    setMsg(null);
+    try {
+      await apiFetch(
+        `/agents/${decideModal.agentId}/approvals/${decideModal.reqId}/decision`,
+        { method: "POST", body: JSON.stringify(decideForm) }
+      );
+      setMsg({ type: "success", text: `Request ${decideForm.decision}.` });
+      setDecideModal(null);
+      load();
+    } catch (e) {
+      setMsg({ type: "error", text: e.message });
+    } finally { setSubmitting(false); }
+  }
+
+  if (error) return <div className="alert alert-error">{error}</div>;
+  if (!requests) return <div className="loading">Loading governance queue…</div>;
+
+  return (
+    <div>
+      <div className="page-title">Governance Queue</div>
+
+      {msg && <div className={`alert alert-${msg.type}`}>{msg.text}</div>}
+
+      <div className="grid-3">
+        <div className="stat-box">
+          <div className="stat-label">Pending Requests</div>
+          <div className="stat-value">{requests.length}</div>
+        </div>
+        <div className="stat-box">
+          <div className="stat-label">Promotions</div>
+          <div className="stat-value">{requests.filter(r=>r.request_type==="promotion").length}</div>
+        </div>
+        <div className="stat-box">
+          <div className="stat-label">Retirements</div>
+          <div className="stat-value">{requests.filter(r=>r.request_type==="retirement").length}</div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-title" style={{marginBottom:12}}>Pending Approval Requests</div>
+        {requests.length === 0 ? (
+          <div className="empty">No pending requests. Queue is clear.</div>
+        ) : (
+          <table>
+            <thead><tr><th>Agent</th><th>Type</th><th>Transition</th><th>Proposed By</th><th>Proposed At</th><th>Action</th></tr></thead>
+            <tbody>
+              {requests.map(r => (
+                <tr key={r.id}>
+                  <td>
+                    <span className="clickable" onClick={() => onSelectAgent(r.agent_id)}>{r.agent_name}</span>
+                  </td>
+                  <td><span className="tag">{r.request_type}</span></td>
+                  <td style={{fontSize:12}}>{r.from_stage} → {r.to_stage}</td>
+                  <td style={{fontSize:12}}>{r.proposed_by}</td>
+                  <td style={{fontSize:12,color:"#888"}}>{fmtDate(r.proposed_at)}</td>
+                  <td>
+                    <button className="btn btn-outline btn-sm"
+                      onClick={() => { setDecideModal({agentId: r.agent_id, reqId: r.id, req: r}); setMsg(null); }}>
+                      Review
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="card-title" style={{marginBottom:12}}>Recent Governance Activity</div>
+        {auditLog.length === 0 ? <div className="empty">No activity.</div> : (
+          <table>
+            <thead><tr><th>Time</th><th>Action</th><th>Actor</th><th>Agent</th></tr></thead>
+            <tbody>
+              {auditLog.slice(0,15).map(e => (
+                <tr key={e.id}>
+                  <td style={{fontSize:11,color:"#888"}}>{fmtDate(e.event_time)}</td>
+                  <td style={{fontSize:12,fontWeight:600}}>{e.action}</td>
+                  <td style={{fontSize:12}}>{e.actor}</td>
+                  <td style={{fontSize:12,color:"#888"}}>{e.agent_id || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {decideModal && (
+        <Modal title="Review Approval Request" onClose={() => setDecideModal(null)}>
+          <div className="alert alert-info" style={{marginBottom:14,fontSize:12}}>
+            <strong>{decideModal.req.agent_name}</strong>: {decideModal.req.from_stage} → {decideModal.req.to_stage}
+            <br/>Proposed by {decideModal.req.proposed_by} on {fmtDate(decideModal.req.proposed_at)}
+            {decideModal.req.eval_result_id && <><br/>✓ Eval result attached (ID: {decideModal.req.eval_result_id})</>}
+          </div>
+          <form onSubmit={doDecide}>
+            <div className="form-group">
+              <label>Decision</label>
+              <select value={decideForm.decision} onChange={e => setDecideForm({...decideForm, decision: e.target.value})}>
+                <option value="approved">Approve</option>
+                <option value="rejected">Reject</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Reviewed By</label>
+              <input value={decideForm.reviewed_by} onChange={e => setDecideForm({...decideForm, reviewed_by: e.target.value})} />
+            </div>
+            <div className="form-group">
+              <label>Reason</label>
+              <textarea required value={decideForm.reason}
+                onChange={e => setDecideForm({...decideForm, reason: e.target.value})}
+                placeholder="Document your decision rationale (required)" />
+            </div>
+            {msg && <div className={`alert alert-${msg.type}`}>{msg.text}</div>}
+            <div className="modal-actions">
+              <button type="button" className="btn btn-outline" onClick={() => setDecideModal(null)}>Cancel</button>
+              <button type="submit" className={`btn ${decideForm.decision==="approved"?"btn-success":"btn-danger"}`} disabled={submitting}>
+                {submitting ? "Submitting…" : decideForm.decision === "approved" ? "Approve" : "Reject"}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ── App Shell ─────────────────────────────────────────────────────────────
+
+function App() {
+  const [view, setView] = React.useState("registry");
+  const [selectedAgent, setSelectedAgent] = React.useState(null);
+
+  function selectAgent(id) {
+    setSelectedAgent(id);
+    setView("detail");
+  }
+
+  return (
+    <div>
+      <nav className="nav">
+        <span className="nav-brand">AgentOps</span>
+        <span className={`nav-link ${view==="registry"?"active":""}`} onClick={() => setView("registry")}>Registry</span>
+        <span className={`nav-link ${view==="queue"?"active":""}`} onClick={() => setView("queue")}>Governance Queue</span>
+        {selectedAgent && (
+          <span className={`nav-link ${view==="detail"?"active":""}`} onClick={() => setView("detail")}>
+            Agent Detail
+          </span>
+        )}
+        <span style={{marginLeft:"auto",fontSize:12,color:"#556",opacity:0.6}}>Phase 1 · SOP Deviation Review</span>
+      </nav>
+      <div className="container">
+        {view === "registry" && <RegistryView onSelectAgent={selectAgent} />}
+        {view === "detail" && selectedAgent && <AgentDetailView agentId={selectedAgent} />}
+        {view === "queue" && <GovernanceQueueView onSelectAgent={selectAgent} />}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
