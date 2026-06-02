@@ -87,6 +87,14 @@ def _rows_to_list(rows) -> list:
 #  Pydantic schemas
 # ─────────────────────────────────────────────────────────────────────────────
 
+class AgentUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    owner: Optional[str] = None
+    classification: Optional[dict] = None
+    actor: str = "system"
+
+
 class AgentCreate(BaseModel):
     id: str = Field(..., pattern=r"^[a-z0-9\-]+$", description="URL-safe slug")
     name: str
@@ -189,6 +197,28 @@ def create_agent(body: AgentCreate):
         )
         _audit(conn, body.id, body.actor, "AGENT_REGISTERED", {"agent_id": body.id, "name": body.name})
     return {"id": body.id, "stage": "Proposed"}
+
+
+@app.patch("/agents/{agent_id}")
+def update_agent(agent_id: str, body: AgentUpdate):
+    with db() as conn:
+        agent = _ensure_agent(conn, agent_id)
+        updates = {}
+        if body.name is not None:
+            updates["name"] = body.name
+        if body.description is not None:
+            updates["description"] = body.description
+        if body.owner is not None:
+            updates["owner"] = body.owner
+        if body.classification is not None:
+            updates["classification"] = json.dumps(body.classification)
+        if not updates:
+            return {"id": agent_id, "status": "no changes"}
+        updates["updated_at"] = _now()
+        set_clause = ", ".join(f"{k}=?" for k in updates)
+        conn.execute(f"UPDATE agents SET {set_clause} WHERE id=?", (*updates.values(), agent_id))
+        _audit(conn, agent_id, body.actor, "AGENT_UPDATED", {k: v for k, v in updates.items() if k != "updated_at"})
+    return {"id": agent_id, "status": "updated"}
 
 
 @app.get("/agents/{agent_id}")

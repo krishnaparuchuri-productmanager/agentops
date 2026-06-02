@@ -114,8 +114,25 @@
     /* Modal overlay */
     .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; display: flex; align-items: center; justify-content: center; }
     .modal { background: #fff; border-radius: 12px; padding: 28px; width: 480px; max-width: 95vw; box-shadow: 0 8px 40px rgba(0,0,0,0.2); }
+    .modal-lg { width: 620px; max-width: 96vw; max-height: 88vh; overflow-y: auto; }
     .modal-title { font-size: 17px; font-weight: 700; margin-bottom: 18px; }
     .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+    .modal-steps { display: flex; margin-bottom: 22px; border-bottom: 2px solid #f0f0f0; }
+    .modal-step-item { flex: 1; text-align: center; padding-bottom: 8px; font-size: 11px; font-weight: 600; color: #bbb; border-bottom: 2px solid transparent; margin-bottom: -2px; }
+    .modal-step-item.active { color: #3b5bdb; border-bottom-color: #3b5bdb; }
+    .modal-step-item.done { color: #2f9e44; border-bottom-color: #2f9e44; }
+    .section-label { font-size: 11px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 0.7px; margin: 18px 0 10px; padding-top: 14px; border-top: 1px solid #f0f0f0; }
+    .chip-wrap { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; min-height: 28px; }
+    .chip { display: inline-flex; align-items: center; gap: 5px; background: #eef1ff; color: #3b5bdb; border-radius: 12px; padding: 4px 10px; font-size: 12px; font-weight: 500; }
+    .chip-orange { background: #fff4e6; color: #d9480f; }
+    .chip-green { background: #ebfbee; color: #2f9e44; }
+    .chip-remove { cursor: pointer; color: #aaa; font-size: 15px; line-height: 1; }
+    .chip-remove:hover { color: #e03131; }
+    .chip-input-row { display: flex; gap: 6px; margin-top: 6px; }
+    .chip-input-row input { flex: 1; margin-bottom: 0; }
+    .info-row { display: flex; gap: 6px; font-size: 12px; color: #555; margin-bottom: 6px; }
+    .info-row .info-label { font-weight: 600; color: #888; min-width: 110px; }
+    .tag-orange { background: #fff4e6; color: #d9480f; }
 
     .clickable { cursor: pointer; color: #3b5bdb; font-weight: 500; }
     .clickable:hover { text-decoration: underline; }
@@ -191,12 +208,41 @@ function LifecycleStepper({ current }) {
 
 // ── Modal ─────────────────────────────────────────────────────────────────
 
-function Modal({ title, onClose, children }) {
+function Modal({ title, onClose, children, large }) {
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal">
+      <div className={large ? "modal modal-lg" : "modal"}>
         <div className="modal-title">{title}</div>
         {children}
+      </div>
+    </div>
+  );
+}
+
+// ── ChipInput ─────────────────────────────────────────────────────────────
+
+function ChipInput({ value, onChange, placeholder, color }) {
+  const [input, setInput] = React.useState("");
+  function add() {
+    const v = input.trim();
+    if (v && !value.includes(v)) onChange([...value, v]);
+    setInput("");
+  }
+  return (
+    <div>
+      <div className="chip-input-row">
+        <input value={input} onChange={e => setInput(e.target.value)}
+          placeholder={placeholder}
+          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); add(); } }} />
+        <button type="button" className="btn btn-outline btn-sm" onClick={add}>Add</button>
+      </div>
+      <div className="chip-wrap">
+        {value.map((v, i) => (
+          <span key={i} className={`chip ${color || ""}`}>
+            {v}
+            <span className="chip-remove" onClick={() => onChange(value.filter((_, j) => j !== i))}>×</span>
+          </span>
+        ))}
       </div>
     </div>
   );
@@ -208,7 +254,9 @@ function RegistryView({ onSelectAgent }) {
   const [agents, setAgents] = React.useState(null);
   const [error, setError] = React.useState(null);
   const [showRegister, setShowRegister] = React.useState(false);
-  const [form, setForm] = React.useState({ id: "", name: "", description: "", owner: "" });
+  const [step, setStep] = React.useState(1);
+  const defaultForm = { id:"", name:"", owner:"", description:"", product:"", workflow:"", domain:"", environment:"production", production_critical:false, pii_access:false, regulated_domain:false, escalates_to_human:false, eval_threshold:0.80, guardrails:[], golden_rules:[] };
+  const [form, setForm] = React.useState(defaultForm);
   const [submitting, setSubmitting] = React.useState(false);
   const [msg, setMsg] = React.useState(null);
 
@@ -228,10 +276,12 @@ function RegistryView({ onSelectAgent }) {
     setSubmitting(true);
     setMsg(null);
     try {
-      await apiFetch("/agents", { method: "POST", body: JSON.stringify({ ...form, actor: "Governance User" }) });
+      const classification = { production_critical: form.production_critical, pii_access: form.pii_access, regulated_domain: form.regulated_domain, escalates_to_human: form.escalates_to_human, product: form.product, workflow: form.workflow, domain: form.domain, environment: form.environment, eval_threshold: parseFloat(form.eval_threshold), guardrails: form.guardrails, golden_rules: form.golden_rules };
+      await apiFetch("/agents", { method: "POST", body: JSON.stringify({ id: form.id, name: form.name, owner: form.owner, description: form.description, classification, actor: "Governance User" }) });
       setMsg({ type: "success", text: `Agent '${form.name}' registered.` });
       setShowRegister(false);
-      setForm({ id: "", name: "", description: "", owner: "" });
+      setForm(defaultForm);
+      setStep(1);
       load();
     } catch (e) {
       setMsg({ type: "error", text: e.message });
@@ -310,33 +360,98 @@ function RegistryView({ onSelectAgent }) {
       </div>
 
       {showRegister && (
-        <Modal title="Register New Agent" onClose={() => setShowRegister(false)}>
-          <form onSubmit={handleRegister}>
-            <div className="form-group">
-              <label>Agent ID (slug)</label>
-              <input required placeholder="e.g. sop-deviation-review" value={form.id}
-                onChange={e => setForm({...form, id: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g,"-")})} />
-            </div>
-            <div className="form-group">
-              <label>Name</label>
-              <input required placeholder="Human-readable name" value={form.name}
-                onChange={e => setForm({...form, name: e.target.value})} />
-            </div>
-            <div className="form-group">
-              <label>Owner</label>
-              <input required placeholder="Team or person" value={form.owner}
-                onChange={e => setForm({...form, owner: e.target.value})} />
-            </div>
-            <div className="form-group">
-              <label>Description</label>
-              <textarea placeholder="What does this agent do?" value={form.description}
-                onChange={e => setForm({...form, description: e.target.value})} />
-            </div>
+        <Modal title="Register New Agent" large onClose={() => { setShowRegister(false); setStep(1); setForm(defaultForm); }}>
+          <div className="modal-steps">
+            {["Identity","Context & Classification","Config"].map((s,i) => (
+              <div key={s} className={`modal-step-item ${step===i+1?"active":step>i+1?"done":""}`}>
+                {step>i+1?"✓ ":""}{i+1}. {s}
+              </div>
+            ))}
+          </div>
+          <form onSubmit={step < 3 ? (e => { e.preventDefault(); setStep(step+1); }) : handleRegister}>
+            {/* Step 1: Identity */}
+            {step === 1 && (<>
+              <div className="form-group">
+                <label>Agent ID (slug)</label>
+                <input required placeholder="e.g. sop-deviation-review" value={form.id}
+                  onChange={e => setForm({...form, id: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g,"-")})} />
+              </div>
+              <div className="form-group">
+                <label>Name</label>
+                <input required placeholder="Human-readable name" value={form.name}
+                  onChange={e => setForm({...form, name: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label>Owner</label>
+                <input required placeholder="Team or person" value={form.owner}
+                  onChange={e => setForm({...form, owner: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label>Description</label>
+                <textarea placeholder="What does this agent do?" value={form.description}
+                  onChange={e => setForm({...form, description: e.target.value})} />
+              </div>
+            </>)}
+            {/* Step 2: Context & Classification */}
+            {step === 2 && (<>
+              <div className="grid-2" style={{gap:10}}>
+                <div className="form-group">
+                  <label>Product</label>
+                  <input placeholder="e.g. Claims Processing" value={form.product}
+                    onChange={e => setForm({...form, product: e.target.value})} />
+                </div>
+                <div className="form-group">
+                  <label>Workflow</label>
+                  <input placeholder="e.g. SOP Review" value={form.workflow}
+                    onChange={e => setForm({...form, workflow: e.target.value})} />
+                </div>
+                <div className="form-group">
+                  <label>Domain</label>
+                  <input placeholder="e.g. Healthcare, Finance" value={form.domain}
+                    onChange={e => setForm({...form, domain: e.target.value})} />
+                </div>
+                <div className="form-group">
+                  <label>Environment</label>
+                  <select value={form.environment} onChange={e => setForm({...form, environment: e.target.value})}>
+                    <option value="production">Production</option>
+                    <option value="staging">Staging</option>
+                    <option value="development">Development</option>
+                  </select>
+                </div>
+              </div>
+              <div className="section-label">Risk & Classification</div>
+              {[["production_critical","Production Critical"],["pii_access","PII Access"],["regulated_domain","Regulated Domain"],["escalates_to_human","Escalates to Human"]].map(([k,label]) => (
+                <div key={k} style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                  <input type="checkbox" checked={form[k]} onChange={e => setForm({...form,[k]:e.target.checked})} style={{width:"auto"}} />
+                  <span style={{fontSize:13}}>{label}</span>
+                </div>
+              ))}
+            </>)}
+            {/* Step 3: Config */}
+            {step === 3 && (<>
+              <div className="form-group">
+                <label>Eval Pass Threshold (%)</label>
+                <input type="number" min="0" max="100" step="1" value={Math.round(form.eval_threshold*100)}
+                  onChange={e => setForm({...form, eval_threshold: parseFloat(e.target.value)/100})} />
+                <div style={{fontSize:11,color:"#888",marginTop:4}}>Promotion to Approved is blocked until eval meets this threshold</div>
+              </div>
+              <div className="form-group">
+                <label>Guardrails</label>
+                <ChipInput value={form.guardrails} onChange={v => setForm({...form, guardrails: v})}
+                  placeholder="e.g. No PII in output" color="chip-orange" />
+              </div>
+              <div className="form-group" style={{marginTop:14}}>
+                <label>Golden Rules</label>
+                <ChipInput value={form.golden_rules} onChange={v => setForm({...form, golden_rules: v})}
+                  placeholder="e.g. Always cite source document" color="chip-green" />
+              </div>
+            </>)}
             {msg && <div className={`alert alert-${msg.type}`}>{msg.text}</div>}
             <div className="modal-actions">
-              <button type="button" className="btn btn-outline" onClick={() => setShowRegister(false)}>Cancel</button>
+              <button type="button" className="btn btn-outline" onClick={() => { setShowRegister(false); setStep(1); setForm(defaultForm); }}>Cancel</button>
+              {step > 1 && <button type="button" className="btn btn-outline" onClick={() => setStep(step-1)}>← Back</button>}
               <button type="submit" className="btn btn-primary" disabled={submitting}>
-                {submitting ? "Registering…" : "Register"}
+                {step < 3 ? "Next →" : submitting ? "Registering…" : "Register"}
               </button>
             </div>
           </form>
@@ -361,6 +476,9 @@ function AgentDetailView({ agentId }) {
   const [showTransition, setShowTransition] = React.useState(false);
   const [showEval, setShowEval] = React.useState(false);
   const [showRetire, setShowRetire] = React.useState(false);
+  const [showEdit, setShowEdit] = React.useState(false);
+  const [editStep, setEditStep] = React.useState(1);
+  const [editForm, setEditForm] = React.useState({});
   const [actionMsg, setActionMsg] = React.useState(null);
 
   const [transForm, setTransForm] = React.useState({ to_stage: "", reason: "", triggered_by: "Governance User" });
@@ -437,6 +555,28 @@ function AgentDetailView({ agentId }) {
     } finally { setSubmitting(false); }
   }
 
+  function openEdit() {
+    const c = typeof agent.classification === "string" ? JSON.parse(agent.classification) : (agent.classification || {});
+    setEditForm({ name: agent.name, owner: agent.owner, description: agent.description || "", product: c.product||"", workflow: c.workflow||"", domain: c.domain||"", environment: c.environment||"production", production_critical: !!c.production_critical, pii_access: !!c.pii_access, regulated_domain: !!c.regulated_domain, escalates_to_human: !!c.escalates_to_human, eval_threshold: c.eval_threshold||0.80, guardrails: c.guardrails||[], golden_rules: c.golden_rules||[] });
+    setEditStep(1);
+    setShowEdit(true);
+  }
+
+  async function submitEdit(e) {
+    e.preventDefault();
+    setSubmitting(true);
+    setActionMsg(null);
+    try {
+      const classification = { production_critical: editForm.production_critical, pii_access: editForm.pii_access, regulated_domain: editForm.regulated_domain, escalates_to_human: editForm.escalates_to_human, product: editForm.product, workflow: editForm.workflow, domain: editForm.domain, environment: editForm.environment, eval_threshold: parseFloat(editForm.eval_threshold), guardrails: editForm.guardrails, golden_rules: editForm.golden_rules };
+      await apiFetch(`/agents/${agentId}`, { method: "PATCH", body: JSON.stringify({ name: editForm.name, owner: editForm.owner, description: editForm.description, classification, actor: "Governance User" }) });
+      setActionMsg({ type: "success", text: "Agent details updated." });
+      setShowEdit(false);
+      load();
+    } catch (e) {
+      setActionMsg({ type: "error", text: e.message });
+    } finally { setSubmitting(false); }
+  }
+
   if (error) return <div className="alert alert-error">{error}</div>;
   if (!agent) return <div className="loading">Loading agent…</div>;
 
@@ -453,6 +593,7 @@ function AgentDetailView({ agentId }) {
         </div>
         <span className={stageCssClass(agent.current_stage)} style={{fontSize:13}}>{agent.current_stage}</span>
         <div style={{marginLeft:"auto", display:"flex", gap:8}}>
+          <button className="btn btn-outline btn-sm" onClick={openEdit}>✏️ Edit</button>
           <button className="btn btn-outline btn-sm" onClick={() => setShowTransition(true)}>Move Stage</button>
           <button className="btn btn-primary btn-sm" onClick={() => setShowEval(true)}>Submit Eval</button>
           {["In Production","Under Monitoring","Deprecated"].includes(agent.current_stage) && (
@@ -503,35 +644,51 @@ function AgentDetailView({ agentId }) {
 
       {/* Tab: Overview */}
       {tab === "overview" && (
-        <div className="grid-2">
-          <div className="card">
-            <div className="card-title" style={{marginBottom:12}}>Classification</div>
-            <table>
-              <tbody>
-                {Object.entries(cls).map(([k, v]) => (
-                  <tr key={k}>
-                    <td style={{fontSize:12,color:"#888",width:"50%"}}>{k.replace(/_/g," ")}</td>
-                    <td style={{fontSize:12}}>
-                      {typeof v === "boolean"
-                        ? <span style={{color: v ? "#2f9e44" : "#e03131"}}>{v ? "Yes" : "No"}</span>
-                        : v}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="card">
-            <div className="card-title" style={{marginBottom:12}}>Description</div>
-            <p style={{fontSize:13,color:"#444",lineHeight:1.6}}>{agent.description}</p>
-            <div style={{marginTop:16,fontSize:12,color:"#888"}}>
-              Registered {fmtDate(agent.created_at)} · Pending approvals: {agent.pending_approvals}
+        <div>
+          <div className="grid-2" style={{marginBottom:0}}>
+            {/* Identity card */}
+            <div className="card">
+              <div className="card-title" style={{marginBottom:12}}>Identity</div>
+              <div className="info-row"><span className="info-label">Description</span><span style={{lineHeight:1.5}}>{agent.description || "—"}</span></div>
+              <div className="info-row"><span className="info-label">Owner</span><span>{agent.owner}</span></div>
+              <div className="info-row"><span className="info-label">Registered</span><span>{fmtDate(agent.created_at)}</span></div>
+              <div className="info-row"><span className="info-label">Pending approvals</span><span>{agent.pending_approvals}</span></div>
+              <div className="info-row"><span className="info-label">Allowed transitions</span><span>{agent.allowed_transitions?.length > 0 ? agent.allowed_transitions.join(", ") : "None (terminal)"}</span></div>
             </div>
-            <div style={{marginTop:8,fontSize:12,color:"#555"}}>
-              <strong>Allowed transitions:</strong>{" "}
-              {agent.allowed_transitions?.length > 0
-                ? agent.allowed_transitions.join(", ")
-                : "None (terminal state)"}
+            {/* Context card */}
+            <div className="card">
+              <div className="card-title" style={{marginBottom:12}}>Context</div>
+              <div className="info-row"><span className="info-label">Product</span><span>{cls.product || "—"}</span></div>
+              <div className="info-row"><span className="info-label">Workflow</span><span>{cls.workflow || "—"}</span></div>
+              <div className="info-row"><span className="info-label">Domain</span><span>{cls.domain || "—"}</span></div>
+              <div className="info-row"><span className="info-label">Environment</span>
+                <span className={`tag ${cls.environment==="production"?"tag-red":cls.environment==="staging"?"tag-orange":""}`}>{cls.environment || "—"}</span>
+              </div>
+              <div style={{marginTop:12,display:"flex",flexWrap:"wrap",gap:4}}>
+                {cls.production_critical && <span className="tag tag-red">prod-critical</span>}
+                {cls.pii_access && <span className="tag tag-red">PII</span>}
+                {cls.regulated_domain && <span className="tag">regulated</span>}
+                {cls.escalates_to_human && <span className="tag tag-green">human-gated</span>}
+              </div>
+            </div>
+          </div>
+          <div className="grid-2" style={{marginTop:16}}>
+            {/* Guardrails card */}
+            <div className="card">
+              <div className="card-title" style={{marginBottom:12}}>Guardrails</div>
+              {cls.guardrails?.length > 0
+                ? <div className="chip-wrap">{cls.guardrails.map((g,i) => <span key={i} className="chip chip-orange">{g}</span>)}</div>
+                : <div className="empty" style={{padding:"12px 0"}}>No guardrails defined</div>}
+              {cls.eval_threshold != null && (
+                <div style={{marginTop:12,fontSize:12,color:"#888"}}>Eval threshold: <strong style={{color:"#1a1a2e"}}>{Math.round(cls.eval_threshold*100)}%</strong></div>
+              )}
+            </div>
+            {/* Golden Rules card */}
+            <div className="card">
+              <div className="card-title" style={{marginBottom:12}}>Golden Rules</div>
+              {cls.golden_rules?.length > 0
+                ? <ol style={{paddingLeft:18,margin:0}}>{cls.golden_rules.map((r,i) => <li key={i} style={{fontSize:13,color:"#444",marginBottom:6,lineHeight:1.5}}>{r}</li>)}</ol>
+                : <div className="empty" style={{padding:"12px 0"}}>No golden rules defined</div>}
             </div>
           </div>
         </div>
@@ -670,6 +827,91 @@ function AgentDetailView({ agentId }) {
             </table>
           )}
         </div>
+      )}
+
+      {/* Modal: Edit Agent */}
+      {showEdit && (
+        <Modal title="Edit Agent" large onClose={() => setShowEdit(false)}>
+          <div className="modal-steps">
+            {["Identity","Context & Classification","Config"].map((s,i) => (
+              <div key={s} className={`modal-step-item ${editStep===i+1?"active":editStep>i+1?"done":""}`}>
+                {editStep>i+1?"✓ ":""}{i+1}. {s}
+              </div>
+            ))}
+          </div>
+          <form onSubmit={editStep < 3 ? (e => { e.preventDefault(); setEditStep(editStep+1); }) : submitEdit}>
+            {editStep === 1 && (<>
+              <div className="form-group">
+                <label>Name</label>
+                <input required value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label>Owner</label>
+                <input required value={editForm.owner} onChange={e => setEditForm({...editForm, owner: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label>Description</label>
+                <textarea value={editForm.description} onChange={e => setEditForm({...editForm, description: e.target.value})} />
+              </div>
+            </>)}
+            {editStep === 2 && (<>
+              <div className="grid-2" style={{gap:10}}>
+                <div className="form-group">
+                  <label>Product</label>
+                  <input placeholder="e.g. Claims Processing" value={editForm.product} onChange={e => setEditForm({...editForm, product: e.target.value})} />
+                </div>
+                <div className="form-group">
+                  <label>Workflow</label>
+                  <input placeholder="e.g. SOP Review" value={editForm.workflow} onChange={e => setEditForm({...editForm, workflow: e.target.value})} />
+                </div>
+                <div className="form-group">
+                  <label>Domain</label>
+                  <input placeholder="e.g. Healthcare" value={editForm.domain} onChange={e => setEditForm({...editForm, domain: e.target.value})} />
+                </div>
+                <div className="form-group">
+                  <label>Environment</label>
+                  <select value={editForm.environment} onChange={e => setEditForm({...editForm, environment: e.target.value})}>
+                    <option value="production">Production</option>
+                    <option value="staging">Staging</option>
+                    <option value="development">Development</option>
+                  </select>
+                </div>
+              </div>
+              <div className="section-label">Risk & Classification</div>
+              {[["production_critical","Production Critical"],["pii_access","PII Access"],["regulated_domain","Regulated Domain"],["escalates_to_human","Escalates to Human"]].map(([k,label]) => (
+                <div key={k} style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                  <input type="checkbox" checked={!!editForm[k]} onChange={e => setEditForm({...editForm,[k]:e.target.checked})} style={{width:"auto"}} />
+                  <span style={{fontSize:13}}>{label}</span>
+                </div>
+              ))}
+            </>)}
+            {editStep === 3 && (<>
+              <div className="form-group">
+                <label>Eval Pass Threshold (%)</label>
+                <input type="number" min="0" max="100" step="1" value={Math.round((editForm.eval_threshold||0.8)*100)}
+                  onChange={e => setEditForm({...editForm, eval_threshold: parseFloat(e.target.value)/100})} />
+              </div>
+              <div className="form-group">
+                <label>Guardrails</label>
+                <ChipInput value={editForm.guardrails||[]} onChange={v => setEditForm({...editForm, guardrails: v})}
+                  placeholder="e.g. No PII in output" color="chip-orange" />
+              </div>
+              <div className="form-group" style={{marginTop:14}}>
+                <label>Golden Rules</label>
+                <ChipInput value={editForm.golden_rules||[]} onChange={v => setEditForm({...editForm, golden_rules: v})}
+                  placeholder="e.g. Always cite source document" color="chip-green" />
+              </div>
+            </>)}
+            {actionMsg && showEdit && <div className={`alert alert-${actionMsg.type}`}>{actionMsg.text}</div>}
+            <div className="modal-actions">
+              <button type="button" className="btn btn-outline" onClick={() => setShowEdit(false)}>Cancel</button>
+              {editStep > 1 && <button type="button" className="btn btn-outline" onClick={() => setEditStep(editStep-1)}>← Back</button>}
+              <button type="submit" className="btn btn-primary" disabled={submitting}>
+                {editStep < 3 ? "Next →" : submitting ? "Saving…" : "Save Changes"}
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
 
       {/* Modal: Move Stage */}
