@@ -4,6 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AgentOps — Governance Platform</title>
+  <!-- Production API config — update config.js with your backend URL -->
+  <script src="config.js"></script>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -128,7 +130,8 @@
 <div id="root"></div>
 
 <script type="text/babel">
-const API = "http://localhost:8000";
+// API base URL: set window.AGENTOPS_API in a config script to override for production
+const API = (typeof window !== "undefined" && window.AGENTOPS_API) || "http://localhost:8000";
 
 // ── Utils ──────────────────────────────────────────────────────────────────
 

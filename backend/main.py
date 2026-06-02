@@ -24,6 +24,7 @@ Endpoints:
 """
 
 import json
+import os
 import uuid
 from datetime import datetime, date
 from typing import Optional
@@ -37,9 +38,11 @@ from lifecycle import validate_transition, allowed_next_stages, TransitionError
 
 app = FastAPI(title="AgentOps", version="1.0.0")
 
+# CORS — allow configured origins or all (for local dev)
+ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -48,6 +51,14 @@ app.add_middleware(
 @app.on_event("startup")
 def startup():
     init_db()
+    # Auto-seed on first run (no agents in DB = fresh deployment)
+    from database import get_connection
+    conn = get_connection()
+    count = conn.execute("SELECT COUNT(*) FROM agents").fetchone()[0]
+    conn.close()
+    if count == 0:
+        from seed import seed
+        seed()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
