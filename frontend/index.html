@@ -179,8 +179,8 @@ function fmtCost(n) {
 }
 
 const STAGE_ORDER = [
-  "Proposed", "Under Review", "Approved", "In Production",
-  "Under Monitoring", "Deprecated", "Retired"
+  "Proposed", "Under Review", "Approved", "Under Monitoring",
+  "In Production", "Deprecated", "Retired"
 ];
 
 // ── Lifecycle Stepper ──────────────────────────────────────────────────────
@@ -482,6 +482,7 @@ function AgentDetailView({ agentId }) {
   const [actionMsg, setActionMsg] = React.useState(null);
 
   const [transForm, setTransForm] = React.useState({ to_stage: "", reason: "", triggered_by: "Governance User" });
+  const [monitoringConfig, setMonitoringConfig] = React.useState({ traffic_pct: 10, data_scope: "", start_date: "", end_date: "" });
   const [evalForm, setEvalForm] = React.useState({ version: "1.0.0", run_by: "Governance User", pass_rate: 0.87, avg_score: 6.67, total_cases: 15, passed_cases: 13, threshold_met: true });
   const [retireForm, setRetireForm] = React.useState({ proposed_by: "Governance User", reason: "", retirement_date: "" });
   const [submitting, setSubmitting] = React.useState(false);
@@ -513,6 +514,20 @@ function AgentDetailView({ agentId }) {
     setActionMsg(null);
     try {
       await apiFetch(`/agents/${agentId}/transitions`, { method: "POST", body: JSON.stringify(transForm) });
+      // If moving to Under Monitoring, save canary config into classification
+      if (transForm.to_stage === "Under Monitoring") {
+        const currentCls = typeof agent.classification === "string" ? JSON.parse(agent.classification) : (agent.classification || {});
+        await apiFetch(`/agents/${agentId}`, { method: "PATCH", body: JSON.stringify({
+          classification: { ...currentCls, monitoring_config: monitoringConfig },
+          actor: transForm.triggered_by
+        })});
+      }
+      // If leaving Under Monitoring, clear monitoring config
+      if (agent.current_stage === "Under Monitoring") {
+        const currentCls = typeof agent.classification === "string" ? JSON.parse(agent.classification) : (agent.classification || {});
+        const { monitoring_config, ...rest } = currentCls;
+        await apiFetch(`/agents/${agentId}`, { method: "PATCH", body: JSON.stringify({ classification: rest, actor: transForm.triggered_by }) });
+      }
       setActionMsg({ type: "success", text: `Moved to ${transForm.to_stage}` });
       setShowTransition(false);
       load();
@@ -672,6 +687,19 @@ function AgentDetailView({ agentId }) {
               </div>
             </div>
           </div>
+          {/* Canary Monitoring Config — visible only when Under Monitoring */}
+          {agent.current_stage === "Under Monitoring" && cls.monitoring_config && (
+            <div className="card" style={{marginTop:16, borderLeft:"4px solid #fab005"}}>
+              <div className="card-title" style={{marginBottom:12}}>🧪 Canary Monitoring Config</div>
+              <div className="grid-2" style={{gap:0}}>
+                <div className="info-row"><span className="info-label">Traffic Routed</span><span style={{fontWeight:700,color:"#d9480f"}}>{cls.monitoring_config.traffic_pct}%</span></div>
+                <div className="info-row"><span className="info-label">Data Scope</span><span>{cls.monitoring_config.data_scope || "—"}</span></div>
+                <div className="info-row"><span className="info-label">Start Date</span><span>{cls.monitoring_config.start_date || "—"}</span></div>
+                <div className="info-row"><span className="info-label">End Date</span><span>{cls.monitoring_config.end_date || "—"}</span></div>
+              </div>
+            </div>
+          )}
+
           <div className="grid-2" style={{marginTop:16}}>
             {/* Guardrails card */}
             <div className="card">
@@ -916,7 +944,7 @@ function AgentDetailView({ agentId }) {
 
       {/* Modal: Move Stage */}
       {showTransition && (
-        <Modal title="Move Lifecycle Stage" onClose={() => setShowTransition(false)}>
+        <Modal title="Move Lifecycle Stage" large={transForm.to_stage === "Under Monitoring"} onClose={() => setShowTransition(false)}>
           <form onSubmit={doTransition}>
             <div className="alert alert-info" style={{marginBottom:14,fontSize:12}}>
               Current stage: <strong>{agent.current_stage}</strong> · Allowed next: {agent.allowed_transitions?.join(", ") || "none"}
@@ -936,6 +964,41 @@ function AgentDetailView({ agentId }) {
               <label>Reason</label>
               <textarea value={transForm.reason} onChange={e => setTransForm({...transForm, reason: e.target.value})} />
             </div>
+
+            {/* Canary config — shown only when moving to Under Monitoring */}
+            {transForm.to_stage === "Under Monitoring" && (
+              <div>
+                <div className="section-label">🧪 Canary / Gradual Rollout Config</div>
+                <div className="alert alert-warn" style={{fontSize:12,marginBottom:14}}>
+                  Define how much traffic and data this agent will receive during monitoring, and when the window starts and ends.
+                </div>
+                <div className="grid-2" style={{gap:10}}>
+                  <div className="form-group">
+                    <label>Traffic % routed to agent</label>
+                    <input type="number" min="1" max="100" required
+                      value={monitoringConfig.traffic_pct}
+                      onChange={e => setMonitoringConfig({...monitoringConfig, traffic_pct: parseInt(e.target.value)})} />
+                  </div>
+                  <div className="form-group">
+                    <label>Data Scope</label>
+                    <input placeholder="e.g. Low-risk cases, Region A" required
+                      value={monitoringConfig.data_scope}
+                      onChange={e => setMonitoringConfig({...monitoringConfig, data_scope: e.target.value})} />
+                  </div>
+                  <div className="form-group">
+                    <label>Start Date</label>
+                    <input type="date" required value={monitoringConfig.start_date}
+                      onChange={e => setMonitoringConfig({...monitoringConfig, start_date: e.target.value})} />
+                  </div>
+                  <div className="form-group">
+                    <label>End Date</label>
+                    <input type="date" required value={monitoringConfig.end_date}
+                      onChange={e => setMonitoringConfig({...monitoringConfig, end_date: e.target.value})} />
+                  </div>
+                </div>
+              </div>
+            )}
+
             {actionMsg && <div className={`alert alert-${actionMsg.type}`}>{actionMsg.text}</div>}
             <div className="modal-actions">
               <button type="button" className="btn btn-outline" onClick={() => setShowTransition(false)}>Cancel</button>

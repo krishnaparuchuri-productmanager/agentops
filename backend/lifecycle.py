@@ -10,9 +10,12 @@ Why an explicit table instead of code conditionals?
 - requires_eval is a first-class constraint, not a buried business rule.
 
 Lifecycle:
-  Proposed → Under Review → Approved → In Production → Under Monitoring
+  Proposed → Under Review → Approved → Under Monitoring → In Production
   → Deprecated → Retired
-  Plus rejection/rollback paths.
+
+  Under Monitoring is a canary/gradual-rollout stage BEFORE full production.
+  It allows controlled traffic routing (configurable %, data scope, time window)
+  so the agent can be validated at low risk before going fully live.
 """
 
 from dataclasses import dataclass
@@ -32,19 +35,16 @@ TRANSITIONS: list[Transition] = [
     # Normal forward path
     Transition("Proposed",          "Under Review",     requires_approval=False, requires_eval=False),
     Transition("Under Review",      "Approved",         requires_approval=True,  requires_eval=True),
-    Transition("Approved",          "In Production",    requires_approval=True,  requires_eval=False),
-    Transition("In Production",     "Under Monitoring", requires_approval=False, requires_eval=False),
-    Transition("Under Monitoring",  "Deprecated",       requires_approval=True,  requires_eval=False),
+    Transition("Approved",          "Under Monitoring", requires_approval=True,  requires_eval=False),  # start canary
+    Transition("Under Monitoring",  "In Production",    requires_approval=True,  requires_eval=False),  # canary passed → full prod
+    Transition("In Production",     "Deprecated",       requires_approval=True,  requires_eval=False),  # end of life
     Transition("Deprecated",        "Retired",          requires_approval=True,  requires_eval=False),
 
     # Rejection / rollback paths
     Transition("Under Review",      "Proposed",         requires_approval=False, requires_eval=False),  # rejected: back to start
-    Transition("In Production",     "Under Review",     requires_approval=True,  requires_eval=False),  # re-review if issues found
-    Transition("Under Monitoring",  "In Production",    requires_approval=True,  requires_eval=False),  # monitoring resolved, back to prod
-    Transition("Under Monitoring",  "Deprecated",       requires_approval=True,  requires_eval=False),  # fast-track deprecation
-
-    # Emergency retirement
-    Transition("In Production",     "Deprecated",       requires_approval=True,  requires_eval=False),
+    Transition("Under Monitoring",  "Approved",         requires_approval=True,  requires_eval=False),  # canary failed: back to approved
+    Transition("Under Monitoring",  "Deprecated",       requires_approval=True,  requires_eval=False),  # canary critical failure: fast-track deprecation
+    Transition("In Production",     "Under Review",     requires_approval=True,  requires_eval=False),  # major issue: full re-review
 ]
 
 # Build lookup: (from, to) → Transition
@@ -57,8 +57,8 @@ STAGES = [
     "Proposed",
     "Under Review",
     "Approved",
-    "In Production",
     "Under Monitoring",
+    "In Production",
     "Deprecated",
     "Retired",
 ]
