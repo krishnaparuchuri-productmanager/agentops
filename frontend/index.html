@@ -290,7 +290,7 @@ function RegistryView({ onSelectAgent }) {
   const [error, setError] = React.useState(null);
   const [showRegister, setShowRegister] = React.useState(false);
   const [step, setStep] = React.useState(1);
-  const defaultForm = { id:"", name:"", owner:"", description:"", product:"", workflow:"", domain:"", environment:"production", production_critical:false, pii_access:false, regulated_domain:false, escalates_to_human:false, eval_threshold:0.80, model:"", guardrails:[], golden_rules:[] };
+  const defaultForm = { id:"", name:"", owner:"", description:"", product:"", workflow:"", domain:"", environment:"production", production_critical:false, pii_access:false, regulated_domain:false, escalates_to_human:false, eval_threshold:0.80, model:"", guardrails:[], golden_rules:[], max_tokens_per_call:"", max_cost_per_session:"", max_cost_per_day:"", monthly_budget:"", alert_threshold_pct:80 };
   const [form, setForm] = React.useState(defaultForm);
   const [submitting, setSubmitting] = React.useState(false);
   const [msg, setMsg] = React.useState(null);
@@ -311,7 +311,14 @@ function RegistryView({ onSelectAgent }) {
     setSubmitting(true);
     setMsg(null);
     try {
-      const classification = { production_critical: form.production_critical, pii_access: form.pii_access, regulated_domain: form.regulated_domain, escalates_to_human: form.escalates_to_human, product: form.product, workflow: form.workflow, domain: form.domain, environment: form.environment, eval_threshold: parseFloat(form.eval_threshold), model: form.model, guardrails: form.guardrails, golden_rules: form.golden_rules };
+      const budget_config = {
+        ...(form.max_tokens_per_call  ? { max_tokens_per_call:  parseInt(form.max_tokens_per_call) }  : {}),
+        ...(form.max_cost_per_session ? { max_cost_per_session: parseFloat(form.max_cost_per_session) } : {}),
+        ...(form.max_cost_per_day     ? { max_cost_per_day:     parseFloat(form.max_cost_per_day) }     : {}),
+        ...(form.monthly_budget       ? { monthly_budget:       parseFloat(form.monthly_budget) }       : {}),
+        alert_threshold_pct: form.alert_threshold_pct || 80,
+      };
+      const classification = { production_critical: form.production_critical, pii_access: form.pii_access, regulated_domain: form.regulated_domain, escalates_to_human: form.escalates_to_human, product: form.product, workflow: form.workflow, domain: form.domain, environment: form.environment, eval_threshold: parseFloat(form.eval_threshold), model: form.model, guardrails: form.guardrails, golden_rules: form.golden_rules, budget_config };
       await apiFetch("/agents", { method: "POST", body: JSON.stringify({ id: form.id, name: form.name, owner: form.owner, description: form.description, classification, actor: "Governance User" }) });
       setMsg({ type: "success", text: `Agent '${form.name}' registered.` });
       setShowRegister(false);
@@ -497,6 +504,48 @@ function RegistryView({ onSelectAgent }) {
                 <ChipInput value={form.golden_rules} onChange={v => setForm({...form, golden_rules: v})}
                   placeholder="e.g. Always cite source document" color="chip-green" />
               </div>
+
+              <div className="section-label" style={{marginTop:20}}>💰 Budget & Token Limits</div>
+              <div style={{fontSize:12,color:"#888",marginBottom:12}}>
+                Operational hard limits enforced at the platform level — not by the LLM. Leave blank to set no limit.
+              </div>
+              <div className="grid-2" style={{gap:10}}>
+                <div className="form-group">
+                  <label>Max tokens per call</label>
+                  <input type="number" min="1" placeholder="e.g. 2000"
+                    value={form.max_tokens_per_call}
+                    onChange={e => setForm({...form, max_tokens_per_call: e.target.value})} />
+                  <div style={{fontSize:11,color:"#888",marginTop:3}}>Hard cap on input + output tokens per single request</div>
+                </div>
+                <div className="form-group">
+                  <label>Max cost per session (USD)</label>
+                  <input type="number" min="0" step="0.001" placeholder="e.g. 0.05"
+                    value={form.max_cost_per_session}
+                    onChange={e => setForm({...form, max_cost_per_session: e.target.value})} />
+                  <div style={{fontSize:11,color:"#888",marginTop:3}}>Per-conversation spend ceiling</div>
+                </div>
+                <div className="form-group">
+                  <label>Max cost per day (USD)</label>
+                  <input type="number" min="0" step="0.01" placeholder="e.g. 5.00"
+                    value={form.max_cost_per_day}
+                    onChange={e => setForm({...form, max_cost_per_day: e.target.value})} />
+                  <div style={{fontSize:11,color:"#888",marginTop:3}}>Daily spend cap — agent paused if exceeded</div>
+                </div>
+                <div className="form-group">
+                  <label>Monthly budget (USD)</label>
+                  <input type="number" min="0" step="1" placeholder="e.g. 50"
+                    value={form.monthly_budget}
+                    onChange={e => setForm({...form, monthly_budget: e.target.value})} />
+                  <div style={{fontSize:11,color:"#888",marginTop:3}}>Total monthly cost allowance</div>
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Alert at (% of daily budget)</label>
+                <input type="number" min="1" max="100" step="1"
+                  value={form.alert_threshold_pct}
+                  onChange={e => setForm({...form, alert_threshold_pct: parseInt(e.target.value)})} />
+                <div style={{fontSize:11,color:"#888",marginTop:3}}>Send governance alert when daily spend reaches this % of the daily cap</div>
+              </div>
             </>)}
             {msg && <div className={`alert alert-${msg.type}`}>{msg.text}</div>}
             <div className="modal-actions">
@@ -663,7 +712,7 @@ function AgentDetailView({ agentId }) {
 
   function openEdit() {
     const c = typeof agent.classification === "string" ? JSON.parse(agent.classification) : (agent.classification || {});
-    setEditForm({ name: agent.name, owner: agent.owner, description: agent.description || "", product: c.product||"", workflow: c.workflow||"", domain: c.domain||"", environment: c.environment||"production", production_critical: !!c.production_critical, pii_access: !!c.pii_access, regulated_domain: !!c.regulated_domain, escalates_to_human: !!c.escalates_to_human, eval_threshold: c.eval_threshold||0.80, model: c.model||"", guardrails: c.guardrails||[], golden_rules: c.golden_rules||[] });
+    setEditForm({ name: agent.name, owner: agent.owner, description: agent.description || "", product: c.product||"", workflow: c.workflow||"", domain: c.domain||"", environment: c.environment||"production", production_critical: !!c.production_critical, pii_access: !!c.pii_access, regulated_domain: !!c.regulated_domain, escalates_to_human: !!c.escalates_to_human, eval_threshold: c.eval_threshold||0.80, model: c.model||"", guardrails: c.guardrails||[], golden_rules: c.golden_rules||[], budget_config: c.budget_config||{} });
     setEditStep(1);
     setShowEdit(true);
   }
@@ -673,7 +722,7 @@ function AgentDetailView({ agentId }) {
     setSubmitting(true);
     setActionMsg(null);
     try {
-      const classification = { production_critical: editForm.production_critical, pii_access: editForm.pii_access, regulated_domain: editForm.regulated_domain, escalates_to_human: editForm.escalates_to_human, product: editForm.product, workflow: editForm.workflow, domain: editForm.domain, environment: editForm.environment, eval_threshold: parseFloat(editForm.eval_threshold), model: editForm.model, guardrails: editForm.guardrails, golden_rules: editForm.golden_rules };
+      const classification = { production_critical: editForm.production_critical, pii_access: editForm.pii_access, regulated_domain: editForm.regulated_domain, escalates_to_human: editForm.escalates_to_human, product: editForm.product, workflow: editForm.workflow, domain: editForm.domain, environment: editForm.environment, eval_threshold: parseFloat(editForm.eval_threshold), model: editForm.model, guardrails: editForm.guardrails, golden_rules: editForm.golden_rules, budget_config: editForm.budget_config||{} };
       await apiFetch(`/agents/${agentId}`, { method: "PATCH", body: JSON.stringify({ name: editForm.name, owner: editForm.owner, description: editForm.description, classification, actor: "Governance User" }) });
       setActionMsg({ type: "success", text: "Agent details updated." });
       setShowEdit(false);
@@ -876,6 +925,53 @@ function AgentDetailView({ agentId }) {
                 : <div className="empty" style={{padding:"12px 0"}}>No golden rules defined</div>}
             </div>
           </div>
+
+          {/* Budget & Token Limits card */}
+          {cls.budget_config && Object.keys(cls.budget_config).length > 0 && (
+            <div className="card" style={{marginTop:16, borderLeft:"4px solid #3b5bdb"}}>
+              <div className="card-title" style={{marginBottom:12}}>💰 Budget & Token Limits</div>
+              <div className="grid-2" style={{gap:0}}>
+                {cls.budget_config.max_tokens_per_call && (
+                  <div className="info-row">
+                    <span className="info-label">Max tokens / call</span>
+                    <span style={{fontWeight:600}}>{cls.budget_config.max_tokens_per_call.toLocaleString()}</span>
+                  </div>
+                )}
+                {cls.budget_config.max_cost_per_session != null && (
+                  <div className="info-row">
+                    <span className="info-label">Max cost / session</span>
+                    <span style={{fontWeight:600}}>${cls.budget_config.max_cost_per_session.toFixed(3)}</span>
+                  </div>
+                )}
+                {cls.budget_config.max_cost_per_day != null && (
+                  <div className="info-row">
+                    <span className="info-label">Daily cap</span>
+                    <span style={{fontWeight:600, color:"#c92a2a"}}>${cls.budget_config.max_cost_per_day.toFixed(2)}</span>
+                    {cost30d?.total_cost_usd != null && cls.budget_config.max_cost_per_day > 0 && (() => {
+                      const dailyAvg = cost30d.total_cost_usd / 30;
+                      const pct = Math.round((dailyAvg / cls.budget_config.max_cost_per_day) * 100);
+                      return <span style={{marginLeft:8, fontSize:11, color: pct >= (cls.budget_config.alert_threshold_pct||80) ? "#c92a2a" : "#2f9e44"}}>({pct}% of cap avg/day)</span>;
+                    })()}
+                  </div>
+                )}
+                {cls.budget_config.monthly_budget != null && (
+                  <div className="info-row">
+                    <span className="info-label">Monthly budget</span>
+                    <span style={{fontWeight:600}}>${cls.budget_config.monthly_budget.toFixed(2)}</span>
+                  </div>
+                )}
+                {cls.budget_config.alert_threshold_pct && (
+                  <div className="info-row">
+                    <span className="info-label">Alert threshold</span>
+                    <span style={{fontWeight:600}}>{cls.budget_config.alert_threshold_pct}% of daily cap</span>
+                  </div>
+                )}
+              </div>
+              <div style={{fontSize:11,color:"#888",marginTop:10}}>
+                These are platform-enforced operational limits, not LLM instructions. Agent is paused automatically if daily cap is exceeded.
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1327,6 +1423,48 @@ function AgentDetailView({ agentId }) {
                 <label>Golden Rules</label>
                 <ChipInput value={editForm.golden_rules||[]} onChange={v => setEditForm({...editForm, golden_rules: v})}
                   placeholder="e.g. Always cite source document" color="chip-green" />
+              </div>
+
+              <div className="section-label" style={{marginTop:20}}>💰 Budget & Token Limits</div>
+              <div style={{fontSize:12,color:"#888",marginBottom:12}}>
+                Operational hard limits enforced at the platform level — not by the LLM. Leave blank to set no limit.
+              </div>
+              <div className="grid-2" style={{gap:10}}>
+                <div className="form-group">
+                  <label>Max tokens per call</label>
+                  <input type="number" min="1" placeholder="e.g. 2000"
+                    value={editForm.budget_config?.max_tokens_per_call||""}
+                    onChange={e => setEditForm({...editForm, budget_config: {...(editForm.budget_config||{}), max_tokens_per_call: e.target.value ? parseInt(e.target.value) : undefined}})} />
+                  <div style={{fontSize:11,color:"#888",marginTop:3}}>Hard cap on input + output tokens per single request</div>
+                </div>
+                <div className="form-group">
+                  <label>Max cost per session (USD)</label>
+                  <input type="number" min="0" step="0.001" placeholder="e.g. 0.05"
+                    value={editForm.budget_config?.max_cost_per_session||""}
+                    onChange={e => setEditForm({...editForm, budget_config: {...(editForm.budget_config||{}), max_cost_per_session: e.target.value ? parseFloat(e.target.value) : undefined}})} />
+                  <div style={{fontSize:11,color:"#888",marginTop:3}}>Per-conversation spend ceiling</div>
+                </div>
+                <div className="form-group">
+                  <label>Max cost per day (USD)</label>
+                  <input type="number" min="0" step="0.01" placeholder="e.g. 5.00"
+                    value={editForm.budget_config?.max_cost_per_day||""}
+                    onChange={e => setEditForm({...editForm, budget_config: {...(editForm.budget_config||{}), max_cost_per_day: e.target.value ? parseFloat(e.target.value) : undefined}})} />
+                  <div style={{fontSize:11,color:"#888",marginTop:3}}>Daily spend cap — agent paused if exceeded</div>
+                </div>
+                <div className="form-group">
+                  <label>Monthly budget (USD)</label>
+                  <input type="number" min="0" step="1" placeholder="e.g. 50"
+                    value={editForm.budget_config?.monthly_budget||""}
+                    onChange={e => setEditForm({...editForm, budget_config: {...(editForm.budget_config||{}), monthly_budget: e.target.value ? parseFloat(e.target.value) : undefined}})} />
+                  <div style={{fontSize:11,color:"#888",marginTop:3}}>Total monthly cost allowance</div>
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Alert at (% of daily budget)</label>
+                <input type="number" min="1" max="100" step="1"
+                  value={editForm.budget_config?.alert_threshold_pct||80}
+                  onChange={e => setEditForm({...editForm, budget_config: {...(editForm.budget_config||{}), alert_threshold_pct: parseInt(e.target.value)}})} />
+                <div style={{fontSize:11,color:"#888",marginTop:3}}>Send governance alert when daily spend reaches this % of the daily cap</div>
               </div>
             </>)}
             {actionMsg && showEdit && <div className={`alert alert-${actionMsg.type}`}>{actionMsg.text}</div>}
