@@ -2184,18 +2184,34 @@ function AgentDetailView({ agentId }) {
 // ── Governance Queue View ─────────────────────────────────────────────────
 
 function GovernanceQueueView({ onSelectAgent }) {
-  const [requests, setRequests] = React.useState(null);
+  const [queueTab, setQueueTab]         = React.useState("alerts");
+  const [requests, setRequests]         = React.useState(null);
   const [decidedRequests, setDecidedRequests] = React.useState([]);
-  const [error, setError] = React.useState(null);
-  const [decideModal, setDecideModal] = React.useState(null); // {agentId, reqId, req}
-  const [decideForm, setDecideForm] = React.useState({ decision: "approved", reviewed_by: "Governance Lead", reason: "" });
-  const [submitting, setSubmitting] = React.useState(false);
-  const [msg, setMsg] = React.useState(null);
+  const [allAlerts, setAllAlerts]       = React.useState(null);
+  const [error, setError]               = React.useState(null);
+  const [decideModal, setDecideModal]   = React.useState(null);
+  const [decideForm, setDecideForm]     = React.useState({ decision: "approved", reviewed_by: "Governance Lead", reason: "" });
+  const [submitting, setSubmitting]     = React.useState(false);
+  const [msg, setMsg]                   = React.useState(null);
+
+  // Alert action state (same pattern as AgentDetailView)
+  const [alertAction, setAlertAction]     = React.useState(null);
+  const [newCapValue, setNewCapValue]     = React.useState("");
+  const [newModelValue, setNewModelValue] = React.useState("");
+  const [agentCache, setAgentCache]       = React.useState({}); // agent_id → classification
 
   async function load() {
     try {
-      // Load all agents, get their pending approvals
-      const agents = await apiFetch("/agents");
+      const [agents, decided, alertsData] = await Promise.all([
+        apiFetch("/agents"),
+        apiFetch("/approvals?decided_only=true&limit=20"),
+        apiFetch("/alerts?active_only=false&limit=100"),
+      ]);
+      // Build agent cache for classification lookups
+      const cache = {};
+      agents.forEach(a => { cache[a.id] = typeof a.classification === "string" ? JSON.parse(a.classification) : (a.classification || {}); });
+      setAgentCache(cache);
+
       const all = [];
       await Promise.all(agents.map(async a => {
         const reqs = await apiFetch(`/agents/${a.id}/approvals?pending_only=true`);
@@ -2203,144 +2219,368 @@ function GovernanceQueueView({ onSelectAgent }) {
       }));
       all.sort((a, b) => new Date(b.proposed_at) - new Date(a.proposed_at));
       setRequests(all);
-
-      // Load recently decided approvals for the activity feed
-      const decided = await apiFetch("/approvals?decided_only=true&limit=20");
       setDecidedRequests(decided);
-    } catch (e) {
-      setError(e.message);
-    }
+      setAllAlerts(alertsData);
+    } catch (e) { setError(e.message); }
   }
 
   React.useEffect(() => { load(); }, []);
 
   async function doDecide(e) {
     e.preventDefault();
-    setSubmitting(true);
-    setMsg(null);
+    setSubmitting(true); setMsg(null);
     try {
-      await apiFetch(
-        `/agents/${decideModal.agentId}/approvals/${decideModal.reqId}/decision`,
-        { method: "POST", body: JSON.stringify(decideForm) }
-      );
+      await apiFetch(`/agents/${decideModal.agentId}/approvals/${decideModal.reqId}/decision`,
+        { method: "POST", body: JSON.stringify(decideForm) });
       setMsg({ type: "success", text: `Request ${decideForm.decision}.` });
       setDecideModal(null);
       load();
-    } catch (e) {
-      setMsg({ type: "error", text: e.message });
-    } finally { setSubmitting(false); }
+    } catch (e) { setMsg({ type: "error", text: e.message }); }
+    finally { setSubmitting(false); }
   }
 
+  // ── Alert actions (per-agent, from the queue) ────────────────────────────
+  async function resolveAlert(agentId, alertId) {
+    await apiFetch(`/agents/${agentId}/alerts/${alertId}/resolve?resolved_by=Governance%20Lead`,
+      { method: "POST", body: JSON.stringify({}) });
+  }
+
+  async function patchAgentClassification(agentId, patch) {
+    const current = agentCache[agentId] || {};
+    const updated = { ...current, ...patch };
+    await apiFetch(`/agents/${agentId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ classification: updated, actor: "Governance Lead" }),
+    });
+    setAgentCache(c => ({ ...c, [agentId]: updated }));
+  }
+
+  async function handleExtendCap(agentId, alertId) {
+    const cap = parseFloat(newCapValue);
+    if (!cap || cap <= 0) { setMsg({ type:"error", text:"Enter a valid cap amount." }); return; }
+    setSubmitting(true);
+    try {
+      const bc = agentCache[agentId]?.budget_config || {};
+      await patchAgentClassification(agentId, { budget_config: { ...bc, max_cost_per_day: cap, cap_extended_at: new Date().toISOString(), cap_extended_from: bc.max_cost_per_day } });
+      if (newModelValue) await patchAgentClassification(agentId, { model: newModelValue, previous_model: agentCache[agentId]?.model, model_switched_at: new Date().toISOString() });
+      await resolveAlert(agentId, alertId);
+      setAlertAction(null); setNewCapValue(""); setNewModelValue("");
+      setMsg({ type:"success", text:`Daily cap extended to $${cap.toFixed(3)} for ${allAlerts.find(a=>a.id===alertId)?.agent_name}.` });
+      load();
+    } catch(e) { setMsg({ type:"error", text: e.message }); }
+    finally { setSubmitting(false); }
+  }
+
+  async function handleSwitchModel(agentId, alertId) {
+    if (!newModelValue) { setMsg({ type:"error", text:"Select a model." }); return; }
+    setSubmitting(true);
+    try {
+      const oldModel = agentCache[agentId]?.model;
+      await patchAgentClassification(agentId, { model: newModelValue, previous_model: oldModel, model_switched_at: new Date().toISOString() });
+      await resolveAlert(agentId, alertId);
+      setAlertAction(null); setNewModelValue("");
+      setMsg({ type:"success", text:`Model switched to ${newModelValue}.` });
+      load();
+    } catch(e) { setMsg({ type:"error", text: e.message }); }
+    finally { setSubmitting(false); }
+  }
+
+  async function handlePauseRequests(agentId, alertId) {
+    if (!confirm(`Pause all new requests for ${allAlerts.find(a=>a.id===alertId)?.agent_name}?`)) return;
+    setSubmitting(true);
+    try {
+      const bc = agentCache[agentId]?.budget_config || {};
+      await patchAgentClassification(agentId, { budget_config: { ...bc, requests_paused: true, paused_at: new Date().toISOString() } });
+      await resolveAlert(agentId, alertId);
+      setMsg({ type:"warn", text:"Requests paused. Resume from the agent's Overview tab → Budget card." });
+      load();
+    } catch(e) { setMsg({ type:"error", text: e.message }); }
+    finally { setSubmitting(false); }
+  }
+
+  async function handleDismissAlert(agentId, alertId) {
+    setSubmitting(true);
+    try {
+      await resolveAlert(agentId, alertId);
+      setMsg({ type:"success", text:"Alert acknowledged and dismissed." });
+      load();
+    } catch(e) { setMsg({ type:"error", text: e.message }); }
+    finally { setSubmitting(false); }
+  }
+
+  // ── Helpers for alert rendering ──────────────────────────────────────────
+  const sevIcon   = { critical:"🔴", warning:"🟡", info:"🔵" };
+  const sevBg     = { critical:"#fff5f5", warning:"#fffbeb", info:"#eff6ff" };
+  const sevBorder = { critical:"#fca5a5", warning:"#fde68a", info:"#bfdbfe" };
+  const sevColor  = { critical:"#991b1b", warning:"#92400e", info:"#1e40af" };
+
   if (error) return <div className="alert alert-error">{error}</div>;
-  if (!requests) return <div className="loading">Loading governance queue…</div>;
+  if (!requests || !allAlerts) return <div className="loading">Loading governance queue…</div>;
+
+  const activeAlerts   = allAlerts.filter(a => !a.resolved_at);
+  const resolvedAlerts = allAlerts.filter(a =>  a.resolved_at);
+  const criticalCount  = activeAlerts.filter(a => a.severity === "critical").length;
 
   return (
     <div>
       <div className="page-title">Governance Queue</div>
-
       {msg && <div className={`alert alert-${msg.type}`}>{msg.text}</div>}
 
-      <div className="grid-3">
-        <div className="stat-box">
-          <div className="stat-label">Pending Requests</div>
-          <div className="stat-value">{requests.length}</div>
+      {/* ── Summary stats ── */}
+      <div className="grid-3" style={{marginBottom:20}}>
+        <div className="stat-box" style={{borderLeft: activeAlerts.length > 0 ? "4px solid #e03131" : "4px solid #2f9e44"}}>
+          <div className="stat-label">Active Alerts</div>
+          <div className="stat-value" style={{color: activeAlerts.length > 0 ? "#e03131" : "#2f9e44"}}>{activeAlerts.length}</div>
+          <div className="stat-sub">{criticalCount > 0 ? `${criticalCount} critical` : "No critical alerts"}</div>
+        </div>
+        <div className="stat-box" style={{borderLeft: requests.length > 0 ? "4px solid #e67700" : "4px solid #2f9e44"}}>
+          <div className="stat-label">Pending Approvals</div>
+          <div className="stat-value" style={{color: requests.length > 0 ? "#e67700" : "#2f9e44"}}>{requests.length}</div>
+          <div className="stat-sub">{requests.filter(r=>r.request_type==="promotion").length} promotions · {requests.filter(r=>r.request_type==="retirement").length} retirements</div>
         </div>
         <div className="stat-box">
-          <div className="stat-label">Promotions</div>
-          <div className="stat-value">{requests.filter(r=>r.request_type==="promotion").length}</div>
-        </div>
-        <div className="stat-box">
-          <div className="stat-label">Retirements</div>
-          <div className="stat-value">{requests.filter(r=>r.request_type==="retirement").length}</div>
+          <div className="stat-label">Recently Decided</div>
+          <div className="stat-value">{decidedRequests.length}</div>
+          <div className="stat-sub">Last 20 decisions</div>
         </div>
       </div>
 
-      <div className="card">
-        <div className="card-title" style={{marginBottom:12}}>Pending Approval Requests</div>
-        {requests.length === 0 ? (
-          <div className="empty">No pending requests. Queue is clear.</div>
-        ) : (
-          <table>
-            <thead><tr><th>Agent</th><th>Type</th><th>Transition</th><th>Proposed By</th><th>Proposed At</th><th>Action</th></tr></thead>
-            <tbody>
-              {requests.map(r => (
-                <tr key={r.id}>
-                  <td>
-                    <span className="clickable" onClick={() => onSelectAgent(r.agent_id)}>{r.agent_name}</span>
-                  </td>
-                  <td><span className="tag">{r.request_type}</span></td>
-                  <td style={{fontSize:12}}>{r.from_stage} → {r.to_stage}</td>
-                  <td style={{fontSize:12}}>{r.proposed_by}</td>
-                  <td style={{fontSize:12,color:"#888"}}>{fmtDate(r.proposed_at)}</td>
-                  <td>
-                    <button className="btn btn-outline btn-sm"
-                      onClick={() => { setDecideModal({agentId: r.agent_id, reqId: r.id, req: r}); setMsg(null); }}>
-                      Review
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+      {/* ── Tabs ── */}
+      <div style={{display:"flex", gap:2, marginBottom:16, borderBottom:"2px solid #eee"}}>
+        {[
+          { key:"alerts",    label:"Alerts",    badge: activeAlerts.length,  badgeColor:"#e03131" },
+          { key:"approvals", label:"Approvals", badge: requests.length,       badgeColor:"#e67700" },
+          { key:"activity",  label:"Activity",  badge: null },
+        ].map(t => (
+          <button key={t.key} onClick={() => setQueueTab(t.key)}
+            style={{padding:"8px 18px", background:"none", border:"none", cursor:"pointer",
+              borderBottom: queueTab===t.key ? "2px solid #3b5bdb" : "2px solid transparent",
+              color: queueTab===t.key ? "#3b5bdb" : "#888", fontWeight: queueTab===t.key ? 600 : 400,
+              fontSize:13, marginBottom:"-2px"}}>
+            {t.label}
+            {t.badge > 0 && <span style={{background:t.badgeColor,color:"#fff",borderRadius:8,padding:"1px 6px",fontSize:10,marginLeft:6}}>{t.badge}</span>}
+          </button>
+        ))}
       </div>
 
-      <div className="card">
-        <div className="card-title" style={{marginBottom:4}}>Recent Governance Activity</div>
-        <div style={{fontSize:12,color:"#888",marginBottom:14}}>Recently decided approval requests — maker comments and checker decisions side by side.</div>
-        {decidedRequests.length === 0 ? (
-          <div className="empty">No decided requests yet. Approve or reject a pending request to see activity here.</div>
-        ) : (
-          <div>
-            {decidedRequests.map(ap => (
-              <div key={ap.id} style={{borderBottom:"1px solid #f0f0f0", padding:"16px 0"}}>
-                {/* Header row */}
-                <div style={{display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", marginBottom:10}}>
-                  <span className="clickable" style={{fontWeight:700, fontSize:13}} onClick={() => onSelectAgent(ap.agent_id)}>{ap.agent_name}</span>
-                  <span className="tag">{ap.request_type}</span>
-                  <span style={{fontSize:12, color:"#555"}}>{ap.from_stage} → {ap.to_stage}</span>
-                  {ap.decision === "approved"
-                    ? <span className="decision-approved">✓ Approved</span>
-                    : <span className="decision-rejected">✗ Rejected</span>}
-                  <span style={{marginLeft:"auto", fontSize:11, color:"#aaa"}}>{fmtDate(ap.reviewed_at)}</span>
-                </div>
+      {/* ════════════════════ TAB: ALERTS ════════════════════ */}
+      {queueTab === "alerts" && (
+        <div>
+          {activeAlerts.length === 0 && resolvedAlerts.length === 0 && (
+            <div className="empty">No alerts across any agents. All systems nominal ✓</div>
+          )}
 
-                <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:12}}>
-                  {/* Maker's comment */}
-                  <div style={{background:"#f8f9ff", border:"1px solid #e0e4f8", borderRadius:8, padding:"10px 12px"}}>
-                    <div style={{display:"flex", alignItems:"center", gap:6, marginBottom:6}}>
-                      <div style={{width:20, height:20, borderRadius:"50%", background:"#e8eaf6", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:800, color:"#3b5bdb"}}>M</div>
-                      <span style={{fontSize:12, fontWeight:700, color:"#3b5bdb"}}>Maker</span>
-                      <span style={{fontSize:11, color:"#888"}}>{ap.proposed_by}</span>
-                    </div>
-                    <div style={{fontSize:12, color: ap.notes ? "#333" : "#aaa", fontStyle: ap.notes ? "normal" : "italic", lineHeight:1.5}}>
-                      {ap.notes || "No comment added with this request."}
-                    </div>
-                    <div style={{fontSize:11, color:"#aaa", marginTop:6}}>{fmtDate(ap.proposed_at)}</div>
-                  </div>
-
-                  {/* Checker's decision */}
-                  <div style={{background: ap.decision==="approved" ? "#f3fbf4" : "#fff5f5", border:`1px solid ${ap.decision==="approved"?"#b2f2bb":"#ffc9c9"}`, borderRadius:8, padding:"10px 12px"}}>
-                    <div style={{display:"flex", alignItems:"center", gap:6, marginBottom:6}}>
-                      <div style={{width:20, height:20, borderRadius:"50%", background: ap.decision==="approved"?"#d3f9d8":"#ffe3e3", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:800, color: ap.decision==="approved"?"#2f9e44":"#c92a2a"}}>C</div>
-                      <span style={{fontSize:12, fontWeight:700, color: ap.decision==="approved"?"#2f9e44":"#c92a2a"}}>Checker</span>
-                      <span style={{fontSize:11, color:"#888"}}>{ap.reviewed_by}</span>
-                    </div>
-                    <div style={{fontSize:12, color: ap.reason ? "#333" : "#aaa", fontStyle: ap.reason ? "normal" : "italic", lineHeight:1.5}}>
-                      {ap.reason || "No reason provided."}
-                    </div>
-                    <div style={{fontSize:11, color:"#aaa", marginTop:6}}>{fmtDate(ap.reviewed_at)}</div>
-                  </div>
-                </div>
+          {activeAlerts.length > 0 && (
+            <div className="card" style={{marginBottom:16}}>
+              <div className="card-title" style={{marginBottom:14}}>
+                🔴 Active Alerts
+                <span style={{marginLeft:8,background:"#e03131",color:"#fff",borderRadius:8,padding:"2px 8px",fontSize:11}}>{activeAlerts.length}</span>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
+              <div style={{display:"flex", flexDirection:"column", gap:12}}>
+                {activeAlerts.map(alert => {
+                  const bg     = sevBg[alert.severity]     || "#fff";
+                  const border = sevBorder[alert.severity] || "#ddd";
+                  const color  = sevColor[alert.severity]  || "#333";
+                  const isExpanded = alertAction?.alertId === alert.id;
+                  return (
+                    <div key={alert.id} style={{background:bg, border:`1px solid ${border}`, borderRadius:8, padding:"12px 16px"}}>
+                      <div style={{display:"flex", alignItems:"flex-start", gap:10}}>
+                        <span style={{fontSize:18, flexShrink:0}}>{sevIcon[alert.severity] || "⚪"}</span>
+                        <div style={{flex:1}}>
+                          {/* Header */}
+                          <div style={{display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", marginBottom:4}}>
+                            <span className="clickable" style={{fontWeight:700, fontSize:13, color:"#3b5bdb"}} onClick={() => onSelectAgent(alert.agent_id)}>
+                              {alert.agent_name}
+                            </span>
+                            <span style={{fontSize:11, color:"#aaa"}}>›</span>
+                            <span style={{fontWeight:600, fontSize:13, color}}>{alert.title}</span>
+                            <span style={{fontSize:10, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.5px", background:border, color, borderRadius:4, padding:"1px 6px"}}>{alert.severity}</span>
+                            <span style={{fontSize:10, color:"#9ca3af", background:"#f3f4f6", borderRadius:4, padding:"1px 6px"}}>{alert.alert_type.replace(/_/g," ")}</span>
+                            <span style={{marginLeft:"auto", fontSize:11, color:"#9ca3af"}}>{fmtDate(alert.triggered_at)}</span>
+                          </div>
+                          {/* Message */}
+                          <div style={{fontSize:12, color:"#555", lineHeight:1.5, marginBottom:6}}>{alert.message}</div>
+                          {/* Metadata chips */}
+                          {alert.metadata && Object.keys(alert.metadata).length > 0 && (
+                            <div style={{display:"flex", gap:10, flexWrap:"wrap", marginBottom:8}}>
+                              {Object.entries(alert.metadata).map(([k,v]) => (
+                                <span key={k} style={{fontSize:11, color:"#6b7280", background:"#f9fafb", border:"1px solid #e5e7eb", borderRadius:4, padding:"1px 8px"}}>
+                                  <strong>{k.replace(/_/g," ")}:</strong> {String(v)}
+                                </span>
+                              ))}
+                            </div>
+                          )}
 
+                          {/* ── Action panel ── */}
+                          <div style={{paddingTop:10, borderTop:`1px solid ${border}`}}>
+                            {alert.alert_type === "cost_threshold" ? (
+                              isExpanded && alertAction.type === "extend" ? (
+                                <div>
+                                  <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:8}}>
+                                    Set new daily cap for <em>{alert.agent_name}</em> (current: ${alert.metadata?.daily_cap_usd?.toFixed(3) ?? "?"})
+                                  </div>
+                                  <div style={{display:"flex", gap:8, flexWrap:"wrap", alignItems:"center"}}>
+                                    <input type="number" step="0.001" min="0" placeholder="New cap e.g. 0.025"
+                                      value={newCapValue} onChange={e => setNewCapValue(e.target.value)}
+                                      style={{width:150, marginBottom:0}} autoFocus />
+                                    <select value={newModelValue} onChange={e => setNewModelValue(e.target.value)} style={{width:200, marginBottom:0}}>
+                                      <option value="">Keep current model</option>
+                                      <option value="claude-haiku-4-5">claude-haiku-4-5 (cheapest)</option>
+                                      <option value="claude-3-haiku-20240307">claude-3-haiku-20240307</option>
+                                      <option value="gpt-4o-mini">gpt-4o-mini</option>
+                                      <option value="mistral-7b">mistral-7b</option>
+                                    </select>
+                                    <button className="btn btn-primary btn-sm" disabled={submitting} onClick={() => handleExtendCap(alert.agent_id, alert.id)}>✓ Confirm</button>
+                                    <button className="btn btn-outline btn-sm" onClick={() => setAlertAction(null)}>Cancel</button>
+                                  </div>
+                                </div>
+                              ) : isExpanded && alertAction.type === "model" ? (
+                                <div>
+                                  <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:8}}>Switch to lower-cost model for <em>{alert.agent_name}</em></div>
+                                  <div style={{display:"flex", gap:8, alignItems:"center"}}>
+                                    <select value={newModelValue} onChange={e => setNewModelValue(e.target.value)} style={{width:220, marginBottom:0}} autoFocus>
+                                      <option value="">Select model…</option>
+                                      <option value="claude-haiku-4-5">claude-haiku-4-5 (~60% cheaper)</option>
+                                      <option value="claude-3-haiku-20240307">claude-3-haiku-20240307</option>
+                                      <option value="gpt-4o-mini">gpt-4o-mini</option>
+                                      <option value="mistral-7b">mistral-7b</option>
+                                    </select>
+                                    <button className="btn btn-primary btn-sm" disabled={submitting} onClick={() => handleSwitchModel(alert.agent_id, alert.id)}>Switch</button>
+                                    <button className="btn btn-outline btn-sm" onClick={() => setAlertAction(null)}>Cancel</button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div style={{display:"flex", gap:8, flexWrap:"wrap", alignItems:"center"}}>
+                                  <span style={{fontSize:11, color:"#6b7280", marginRight:4}}>Take action:</span>
+                                  <button className="btn btn-primary btn-sm" onClick={() => { setAlertAction({ alertId:alert.id, type:"extend" }); setNewCapValue(""); setNewModelValue(""); }}>↑ Extend Daily Cap</button>
+                                  <button className="btn btn-sm" style={{background:"#7c3aed",color:"#fff"}} onClick={() => { setAlertAction({ alertId:alert.id, type:"model" }); setNewModelValue(""); }}>⚡ Switch Model</button>
+                                  <button className="btn btn-danger btn-sm" disabled={submitting} onClick={() => handlePauseRequests(alert.agent_id, alert.id)}>⏸ Pause Requests</button>
+                                  <button className="btn btn-outline btn-sm" disabled={submitting} onClick={() => handleDismissAlert(alert.agent_id, alert.id)}>Dismiss</button>
+                                  <button className="btn btn-outline btn-sm" onClick={() => onSelectAgent(alert.agent_id)}>View Agent →</button>
+                                </div>
+                              )
+                            ) : (
+                              <div style={{display:"flex", gap:8, flexWrap:"wrap", alignItems:"center"}}>
+                                <span style={{fontSize:11, color:"#6b7280", marginRight:4}}>Take action:</span>
+                                <button className="btn btn-outline btn-sm" disabled={submitting} onClick={() => handleDismissAlert(alert.agent_id, alert.id)}>✓ Acknowledge</button>
+                                <button className="btn btn-outline btn-sm" onClick={() => onSelectAgent(alert.agent_id)}>View Agent →</button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {resolvedAlerts.length > 0 && (
+            <div className="card">
+              <div className="card-title" style={{marginBottom:14}}>
+                ✅ Resolved Alerts
+                <span style={{marginLeft:8, background:"#e5e7eb", color:"#6b7280", borderRadius:8, padding:"2px 8px", fontSize:11}}>{resolvedAlerts.length}</span>
+              </div>
+              <div style={{display:"flex", flexDirection:"column", gap:8}}>
+                {resolvedAlerts.map(alert => (
+                  <div key={alert.id} style={{background:"#f9fafb", border:"1px solid #e5e7eb", borderRadius:8, padding:"10px 14px", opacity:0.75}}>
+                    <div style={{display:"flex", alignItems:"center", gap:8, flexWrap:"wrap"}}>
+                      <span>✅</span>
+                      <span className="clickable" style={{fontSize:12, fontWeight:600, color:"#3b5bdb"}} onClick={() => onSelectAgent(alert.agent_id)}>{alert.agent_name}</span>
+                      <span style={{fontSize:12, color:"#6b7280"}}>{alert.title}</span>
+                      <span style={{fontSize:10, color:"#9ca3af", background:"#f3f4f6", borderRadius:4, padding:"1px 6px"}}>{alert.alert_type.replace(/_/g," ")}</span>
+                      <span style={{marginLeft:"auto", fontSize:11, color:"#9ca3af"}}>Resolved by {alert.resolved_by} · {fmtDate(alert.resolved_at)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ════════════════════ TAB: APPROVALS ════════════════════ */}
+      {queueTab === "approvals" && (
+        <div className="card">
+          <div className="card-title" style={{marginBottom:12}}>Pending Approval Requests</div>
+          {requests.length === 0 ? (
+            <div className="empty">No pending requests. Queue is clear ✓</div>
+          ) : (
+            <table>
+              <thead><tr><th>Agent</th><th>Type</th><th>Transition</th><th>Proposed By</th><th>Proposed At</th><th>Action</th></tr></thead>
+              <tbody>
+                {requests.map(r => (
+                  <tr key={r.id}>
+                    <td><span className="clickable" onClick={() => onSelectAgent(r.agent_id)}>{r.agent_name}</span></td>
+                    <td><span className="tag">{r.request_type}</span></td>
+                    <td style={{fontSize:12}}>{r.from_stage} → {r.to_stage}</td>
+                    <td style={{fontSize:12}}>{r.proposed_by}</td>
+                    <td style={{fontSize:12,color:"#888"}}>{fmtDate(r.proposed_at)}</td>
+                    <td>
+                      <button className="btn btn-outline btn-sm"
+                        onClick={() => { setDecideModal({agentId: r.agent_id, reqId: r.id, req: r}); setMsg(null); }}>
+                        Review
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* ════════════════════ TAB: ACTIVITY ════════════════════ */}
+      {queueTab === "activity" && (
+        <div className="card">
+          <div className="card-title" style={{marginBottom:4}}>Recent Governance Activity</div>
+          <div style={{fontSize:12,color:"#888",marginBottom:14}}>Recently decided approval requests — maker comments and checker decisions side by side.</div>
+          {decidedRequests.length === 0 ? (
+            <div className="empty">No decided requests yet.</div>
+          ) : (
+            <div>
+              {decidedRequests.map(ap => (
+                <div key={ap.id} style={{borderBottom:"1px solid #f0f0f0", padding:"16px 0"}}>
+                  <div style={{display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", marginBottom:10}}>
+                    <span className="clickable" style={{fontWeight:700, fontSize:13}} onClick={() => onSelectAgent(ap.agent_id)}>{ap.agent_name}</span>
+                    <span className="tag">{ap.request_type}</span>
+                    <span style={{fontSize:12, color:"#555"}}>{ap.from_stage} → {ap.to_stage}</span>
+                    {ap.decision === "approved"
+                      ? <span className="decision-approved">✓ Approved</span>
+                      : <span className="decision-rejected">✗ Rejected</span>}
+                    <span style={{marginLeft:"auto", fontSize:11, color:"#aaa"}}>{fmtDate(ap.reviewed_at)}</span>
+                  </div>
+                  <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:12}}>
+                    <div style={{background:"#f8f9ff", border:"1px solid #e0e4f8", borderRadius:8, padding:"10px 12px"}}>
+                      <div style={{display:"flex", alignItems:"center", gap:6, marginBottom:6}}>
+                        <div style={{width:20, height:20, borderRadius:"50%", background:"#e8eaf6", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:800, color:"#3b5bdb"}}>M</div>
+                        <span style={{fontSize:12, fontWeight:700, color:"#3b5bdb"}}>Maker</span>
+                        <span style={{fontSize:11, color:"#888"}}>{ap.proposed_by}</span>
+                      </div>
+                      <div style={{fontSize:12, color: ap.notes ? "#333" : "#aaa", fontStyle: ap.notes ? "normal" : "italic", lineHeight:1.5}}>{ap.notes || "No comment added."}</div>
+                      <div style={{fontSize:11, color:"#aaa", marginTop:6}}>{fmtDate(ap.proposed_at)}</div>
+                    </div>
+                    <div style={{background: ap.decision==="approved" ? "#f3fbf4" : "#fff5f5", border:`1px solid ${ap.decision==="approved"?"#b2f2bb":"#ffc9c9"}`, borderRadius:8, padding:"10px 12px"}}>
+                      <div style={{display:"flex", alignItems:"center", gap:6, marginBottom:6}}>
+                        <div style={{width:20, height:20, borderRadius:"50%", background: ap.decision==="approved"?"#d3f9d8":"#ffe3e3", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:800, color: ap.decision==="approved"?"#2f9e44":"#c92a2a"}}>C</div>
+                        <span style={{fontSize:12, fontWeight:700, color: ap.decision==="approved"?"#2f9e44":"#c92a2a"}}>Checker</span>
+                        <span style={{fontSize:11, color:"#888"}}>{ap.reviewed_by}</span>
+                      </div>
+                      <div style={{fontSize:12, color: ap.reason ? "#333" : "#aaa", fontStyle: ap.reason ? "normal" : "italic", lineHeight:1.5}}>{ap.reason || "No reason provided."}</div>
+                      <div style={{fontSize:11, color:"#aaa", marginTop:6}}>{fmtDate(ap.reviewed_at)}</div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Decide Modal ── */}
       {decideModal && (
         <Modal title="Review Approval Request" large onClose={() => setDecideModal(null)}>
-          {/* Request summary */}
           <div style={{background:"#f8f9fa", border:"1px solid #e9ecef", borderRadius:8, padding:14, marginBottom:16}}>
             <div style={{display:"flex", alignItems:"center", gap:10, marginBottom:8}}>
               <span style={{fontWeight:700, fontSize:14}}>{decideModal.req.agent_name}</span>
@@ -2348,19 +2588,14 @@ function GovernanceQueueView({ onSelectAgent }) {
               <span style={{fontSize:13, color:"#555"}}>{decideModal.req.from_stage} → {decideModal.req.to_stage}</span>
             </div>
             <div style={{fontSize:12, color:"#888"}}>Requested by <strong style={{color:"#333"}}>{decideModal.req.proposed_by}</strong> on {fmtDate(decideModal.req.proposed_at)}</div>
-            {decideModal.req.eval_result_id && (
-              <div style={{marginTop:6, fontSize:12, color:"#2f9e44"}}>✓ Eval result attached (ID: {decideModal.req.eval_result_id})</div>
-            )}
+            {decideModal.req.eval_result_id && <div style={{marginTop:6, fontSize:12, color:"#2f9e44"}}>✓ Eval result attached</div>}
           </div>
-
-          {/* Maker's comment */}
           <div style={{marginBottom:16}}>
-            <div style={{fontSize:12, fontWeight:700, color:"#555", marginBottom:6}}>💬 Comment from Maker ({decideModal.req.proposed_by})</div>
+            <div style={{fontSize:12, fontWeight:700, color:"#555", marginBottom:6}}>💬 Comment from Maker</div>
             {decideModal.req.notes
               ? <div style={{fontSize:13, color:"#333", background:"#f8f9ff", border:"1px solid #e0e4f8", borderRadius:6, padding:"10px 14px", lineHeight:1.6}}>{decideModal.req.notes}</div>
               : <div style={{fontSize:12, color:"#aaa", fontStyle:"italic"}}>No comment was added with this request.</div>}
           </div>
-
           <form onSubmit={doDecide}>
             <div className="form-group">
               <label>Your Decision</label>
@@ -2377,8 +2612,7 @@ function GovernanceQueueView({ onSelectAgent }) {
               <label>Your Comment / Reason <span style={{color:"#e03131",fontWeight:700}}>*</span></label>
               <textarea required rows="3" value={decideForm.reason}
                 onChange={e => setDecideForm({...decideForm, reason: e.target.value})}
-                placeholder="Document your decision rationale — this is recorded in the immutable audit log."
-                style={{minHeight:90}} />
+                placeholder="Document your decision rationale — recorded in the immutable audit log." style={{minHeight:90}} />
             </div>
             {msg && <div className={`alert alert-${msg.type}`}>{msg.text}</div>}
             <div className="modal-actions">

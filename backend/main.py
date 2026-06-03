@@ -829,6 +829,45 @@ def resolve_alert(agent_id: str, alert_id: int, resolved_by: str = "Governance U
     return {"alert_id": alert_id, "status": "resolved"}
 
 
+@app.get("/alerts")
+def list_all_alerts(
+    active_only: bool = Query(True),
+    limit:       int  = Query(100, ge=1, le=500),
+):
+    """Return alerts across ALL agents, joined with agent name. Used by Governance Queue."""
+    with db() as conn:
+        if active_only:
+            rows = conn.execute(
+                """SELECT al.*, a.name AS agent_name
+                   FROM agent_alerts al
+                   JOIN agents a ON a.id = al.agent_id
+                   WHERE al.resolved_at IS NULL
+                   ORDER BY
+                     CASE al.severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,
+                     al.triggered_at DESC
+                   LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT al.*, a.name AS agent_name
+                   FROM agent_alerts al
+                   JOIN agents a ON a.id = al.agent_id
+                   ORDER BY al.triggered_at DESC
+                   LIMIT ?""",
+                (limit,),
+            ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["metadata"] = json.loads(d["metadata"])
+        except (json.JSONDecodeError, TypeError):
+            d["metadata"] = {}
+        result.append(d)
+    return result
+
+
 @app.get("/agents/{agent_id}/traces")
 def list_traces(
     agent_id: str,
