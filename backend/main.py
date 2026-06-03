@@ -129,6 +129,7 @@ class ApprovalCreate(BaseModel):
     to_stage: str
     proposed_by: str
     eval_result_id: Optional[int] = None
+    notes: Optional[str] = None  # maker's comment / rationale
 
 
 class ApprovalDecision(BaseModel):
@@ -417,10 +418,10 @@ def propose_approval(agent_id: str, body: ApprovalCreate):
 
         cursor = conn.execute(
             """INSERT INTO approval_requests
-               (agent_id, request_type, from_stage, to_stage, proposed_by, eval_result_id)
-               VALUES (?,?,?,?,?,?)""",
+               (agent_id, request_type, from_stage, to_stage, proposed_by, eval_result_id, notes)
+               VALUES (?,?,?,?,?,?,?)""",
             (agent_id, body.request_type, body.from_stage, body.to_stage,
-             body.proposed_by, body.eval_result_id),
+             body.proposed_by, body.eval_result_id, body.notes),
         )
         req_id = cursor.lastrowid
         _audit(conn, agent_id, body.proposed_by, "APPROVAL_REQUESTED", {
@@ -428,6 +429,7 @@ def propose_approval(agent_id: str, body: ApprovalCreate):
             "type": body.request_type,
             "from": body.from_stage,
             "to": body.to_stage,
+            "notes": body.notes,
         })
     return {"request_id": req_id, "status": "pending"}
 
@@ -454,6 +456,36 @@ def decide_approval(agent_id: str, req_id: int, body: ApprovalDecision):
             "reason": body.reason,
         })
     return {"request_id": req_id, "decision": body.decision}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Global approvals feed (for Governance Queue activity view)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/approvals")
+def list_all_approvals(decided_only: bool = Query(False), limit: int = Query(50)):
+    """Return recent approval requests across all agents, joined with agent name."""
+    with db() as conn:
+        if decided_only:
+            rows = conn.execute(
+                """SELECT ar.*, a.name AS agent_name
+                   FROM approval_requests ar
+                   JOIN agents a ON a.id = ar.agent_id
+                   WHERE ar.decision IS NOT NULL
+                   ORDER BY ar.reviewed_at DESC
+                   LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT ar.*, a.name AS agent_name
+                   FROM approval_requests ar
+                   JOIN agents a ON a.id = ar.agent_id
+                   ORDER BY ar.proposed_at DESC
+                   LIMIT ?""",
+                (limit,),
+            ).fetchall()
+    return [dict(r) for r in rows]
 
 
 # ─────────────────────────────────────────────────────────────────────────────

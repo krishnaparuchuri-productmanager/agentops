@@ -530,7 +530,7 @@ function AgentDetailView({ agentId }) {
   const [showEval, setShowEval] = React.useState(false);
   const [showRetire, setShowRetire] = React.useState(false);
   const [showRequestApproval, setShowRequestApproval] = React.useState(false);
-  const [approvalReqForm, setApprovalReqForm] = React.useState({ to_stage:"", proposed_by:"Governance User", request_type:"promotion" });
+  const [approvalReqForm, setApprovalReqForm] = React.useState({ to_stage:"", proposed_by:"Governance User", request_type:"promotion", notes:"" });
   const [showEdit, setShowEdit] = React.useState(false);
   const [editStep, setEditStep] = React.useState(1);
   const [editForm, setEditForm] = React.useState({});
@@ -652,6 +652,7 @@ function AgentDetailView({ agentId }) {
         from_stage: agent.current_stage,
         to_stage: approvalReqForm.to_stage,
         proposed_by: approvalReqForm.proposed_by,
+        notes: approvalReqForm.notes || null,
       })});
       setActionMsg({ type:"success", text:`Approval request submitted for ${agent.current_stage} → ${approvalReqForm.to_stage}. Go to Governance Queue for a checker to approve it.` });
       setShowRequestApproval(false);
@@ -1036,35 +1037,49 @@ function AgentDetailView({ agentId }) {
             )}
           </div>
           {approvals.length === 0 ? <div className="empty">No approval requests yet. Submit one to unlock gated transitions.</div> : (
-            <table>
-              <thead><tr><th>Type</th><th>Transition</th><th>Proposed By</th><th>Proposed At</th><th>Decision</th><th>Reviewed By</th><th>Action</th></tr></thead>
-              <tbody>
-                {approvals.map(ap => (
-                  <tr key={ap.id}>
-                    <td><span className="tag">{ap.request_type}</span></td>
-                    <td style={{fontSize:12}}>{ap.from_stage} → {ap.to_stage}</td>
-                    <td style={{fontSize:12}}>{ap.proposed_by}</td>
-                    <td style={{fontSize:12,color:"#888"}}>{fmtDate(ap.proposed_at)}</td>
-                    <td>
-                      {!ap.decision
-                        ? <span className="decision-pending">⏳ Pending checker</span>
-                        : ap.decision === "approved"
-                          ? <span className="decision-approved">✓ Approved</span>
-                          : <span className="decision-rejected">✗ Rejected</span>}
-                    </td>
-                    <td style={{fontSize:12,color:"#888"}}>{ap.reviewed_by || "—"}</td>
-                    <td>
-                      {!ap.decision && (
-                        <span style={{fontSize:11,color:"#888"}}>→ Governance Queue</span>
-                      )}
-                      {ap.decision === "approved" && (
-                        <span style={{fontSize:11,color:"#2f9e44"}}>✓ Use Move Stage</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div>
+              {approvals.map(ap => (
+                <div key={ap.id} style={{borderBottom:"1px solid #f0f0f0", padding:"14px 0"}}>
+                  <div style={{display:"flex", alignItems:"center", gap:10, flexWrap:"wrap", marginBottom:6}}>
+                    <span className="tag">{ap.request_type}</span>
+                    <span style={{fontSize:13, fontWeight:600}}>{ap.from_stage} → {ap.to_stage}</span>
+                    {!ap.decision
+                      ? <span className="decision-pending">⏳ Pending checker</span>
+                      : ap.decision === "approved"
+                        ? <span className="decision-approved">✓ Approved</span>
+                        : <span className="decision-rejected">✗ Rejected</span>}
+                    <span style={{marginLeft:"auto", fontSize:11, color:"#aaa"}}>{fmtDate(ap.proposed_at)}</span>
+                  </div>
+                  {/* Maker comment */}
+                  <div style={{display:"flex", gap:10, marginBottom: ap.reason ? 6 : 0}}>
+                    <div style={{width:22, height:22, borderRadius:"50%", background:"#e8eaf6", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700, color:"#3b5bdb", flexShrink:0}}>M</div>
+                    <div style={{fontSize:12}}>
+                      <span style={{fontWeight:600, color:"#333"}}>{ap.proposed_by}</span>
+                      <span style={{color:"#aaa", marginLeft:6, fontSize:11}}>requested</span>
+                      {ap.notes
+                        ? <div style={{marginTop:4, color:"#555", lineHeight:1.5, background:"#f8f9ff", border:"1px solid #e0e4f8", borderRadius:6, padding:"6px 10px"}}>{ap.notes}</div>
+                        : <span style={{marginLeft:6, color:"#bbb", fontSize:11, fontStyle:"italic"}}>no comment added</span>}
+                    </div>
+                  </div>
+                  {/* Checker decision */}
+                  {ap.decision && (
+                    <div style={{display:"flex", gap:10, marginTop:6}}>
+                      <div style={{width:22, height:22, borderRadius:"50%", background: ap.decision==="approved"?"#d3f9d8":"#ffe3e3", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700, color: ap.decision==="approved"?"#2f9e44":"#c92a2a", flexShrink:0}}>C</div>
+                      <div style={{fontSize:12}}>
+                        <span style={{fontWeight:600, color:"#333"}}>{ap.reviewed_by}</span>
+                        <span style={{color:"#aaa", marginLeft:6, fontSize:11}}>{fmtDate(ap.reviewed_at)}</span>
+                        {ap.reason
+                          ? <div style={{marginTop:4, color:"#555", lineHeight:1.5, background: ap.decision==="approved"?"#f3fbf4":"#fff5f5", border:`1px solid ${ap.decision==="approved"?"#b2f2bb":"#ffc9c9"}`, borderRadius:6, padding:"6px 10px"}}>{ap.reason}</div>
+                          : <span style={{marginLeft:6, color:"#bbb", fontSize:11, fontStyle:"italic"}}>no reason provided</span>}
+                      </div>
+                    </div>
+                  )}
+                  {!ap.decision && (
+                    <div style={{marginTop:6, fontSize:11, color:"#888", paddingLeft:32}}>⏳ Awaiting checker review in Governance Queue</div>
+                  )}
+                </div>
+              ))}
+            </div>
           )}
         </div>
         </div>
@@ -1344,6 +1359,13 @@ function AgentDetailView({ agentId }) {
               <input required value={approvalReqForm.proposed_by}
                 onChange={e => setApprovalReqForm({...approvalReqForm, proposed_by: e.target.value})} />
             </div>
+            <div className="form-group">
+              <label>Your Comment <span style={{fontWeight:400,color:"#aaa"}}>(optional — visible to the checker)</span></label>
+              <textarea rows="3" placeholder="e.g. Eval results exceeded threshold on all 15 golden cases. Ready for canary rollout at 10% traffic."
+                value={approvalReqForm.notes}
+                onChange={e => setApprovalReqForm({...approvalReqForm, notes: e.target.value})}
+                style={{minHeight:80}} />
+            </div>
             {actionMsg && showRequestApproval && <div className={`alert alert-${actionMsg.type}`}>{actionMsg.text}</div>}
             <div className="modal-actions">
               <button type="button" className="btn btn-outline" onClick={() => setShowRequestApproval(false)}>Cancel</button>
@@ -1543,7 +1565,7 @@ function AgentDetailView({ agentId }) {
 
 function GovernanceQueueView({ onSelectAgent }) {
   const [requests, setRequests] = React.useState(null);
-  const [auditLog, setAuditLog] = React.useState([]);
+  const [decidedRequests, setDecidedRequests] = React.useState([]);
   const [error, setError] = React.useState(null);
   const [decideModal, setDecideModal] = React.useState(null); // {agentId, reqId, req}
   const [decideForm, setDecideForm] = React.useState({ decision: "approved", reviewed_by: "Governance Lead", reason: "" });
@@ -1562,8 +1584,9 @@ function GovernanceQueueView({ onSelectAgent }) {
       all.sort((a, b) => new Date(b.proposed_at) - new Date(a.proposed_at));
       setRequests(all);
 
-      const log = await apiFetch("/audit?limit=30");
-      setAuditLog(log);
+      // Load recently decided approvals for the activity feed
+      const decided = await apiFetch("/approvals?decided_only=true&limit=20");
+      setDecidedRequests(decided);
     } catch (e) {
       setError(e.message);
     }
@@ -1643,37 +1666,87 @@ function GovernanceQueueView({ onSelectAgent }) {
       </div>
 
       <div className="card">
-        <div className="card-title" style={{marginBottom:12}}>Recent Governance Activity</div>
-        {auditLog.length === 0 ? <div className="empty">No activity.</div> : (
-          <table>
-            <thead><tr><th>Time</th><th>Action</th><th>Actor</th><th>Agent</th></tr></thead>
-            <tbody>
-              {auditLog.slice(0,15).map(e => (
-                <tr key={e.id}>
-                  <td style={{fontSize:11,color:"#888"}}>{fmtDate(e.event_time)}</td>
-                  <td style={{fontSize:12,fontWeight:600}}>{e.action}</td>
-                  <td style={{fontSize:12}}>{e.actor}</td>
-                  <td style={{fontSize:12,color:"#888"}}>{e.agent_id || "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="card-title" style={{marginBottom:4}}>Recent Governance Activity</div>
+        <div style={{fontSize:12,color:"#888",marginBottom:14}}>Recently decided approval requests — maker comments and checker decisions side by side.</div>
+        {decidedRequests.length === 0 ? (
+          <div className="empty">No decided requests yet. Approve or reject a pending request to see activity here.</div>
+        ) : (
+          <div>
+            {decidedRequests.map(ap => (
+              <div key={ap.id} style={{borderBottom:"1px solid #f0f0f0", padding:"16px 0"}}>
+                {/* Header row */}
+                <div style={{display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", marginBottom:10}}>
+                  <span className="clickable" style={{fontWeight:700, fontSize:13}} onClick={() => onSelectAgent(ap.agent_id)}>{ap.agent_name}</span>
+                  <span className="tag">{ap.request_type}</span>
+                  <span style={{fontSize:12, color:"#555"}}>{ap.from_stage} → {ap.to_stage}</span>
+                  {ap.decision === "approved"
+                    ? <span className="decision-approved">✓ Approved</span>
+                    : <span className="decision-rejected">✗ Rejected</span>}
+                  <span style={{marginLeft:"auto", fontSize:11, color:"#aaa"}}>{fmtDate(ap.reviewed_at)}</span>
+                </div>
+
+                <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:12}}>
+                  {/* Maker's comment */}
+                  <div style={{background:"#f8f9ff", border:"1px solid #e0e4f8", borderRadius:8, padding:"10px 12px"}}>
+                    <div style={{display:"flex", alignItems:"center", gap:6, marginBottom:6}}>
+                      <div style={{width:20, height:20, borderRadius:"50%", background:"#e8eaf6", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:800, color:"#3b5bdb"}}>M</div>
+                      <span style={{fontSize:12, fontWeight:700, color:"#3b5bdb"}}>Maker</span>
+                      <span style={{fontSize:11, color:"#888"}}>{ap.proposed_by}</span>
+                    </div>
+                    <div style={{fontSize:12, color: ap.notes ? "#333" : "#aaa", fontStyle: ap.notes ? "normal" : "italic", lineHeight:1.5}}>
+                      {ap.notes || "No comment added with this request."}
+                    </div>
+                    <div style={{fontSize:11, color:"#aaa", marginTop:6}}>{fmtDate(ap.proposed_at)}</div>
+                  </div>
+
+                  {/* Checker's decision */}
+                  <div style={{background: ap.decision==="approved" ? "#f3fbf4" : "#fff5f5", border:`1px solid ${ap.decision==="approved"?"#b2f2bb":"#ffc9c9"}`, borderRadius:8, padding:"10px 12px"}}>
+                    <div style={{display:"flex", alignItems:"center", gap:6, marginBottom:6}}>
+                      <div style={{width:20, height:20, borderRadius:"50%", background: ap.decision==="approved"?"#d3f9d8":"#ffe3e3", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:800, color: ap.decision==="approved"?"#2f9e44":"#c92a2a"}}>C</div>
+                      <span style={{fontSize:12, fontWeight:700, color: ap.decision==="approved"?"#2f9e44":"#c92a2a"}}>Checker</span>
+                      <span style={{fontSize:11, color:"#888"}}>{ap.reviewed_by}</span>
+                    </div>
+                    <div style={{fontSize:12, color: ap.reason ? "#333" : "#aaa", fontStyle: ap.reason ? "normal" : "italic", lineHeight:1.5}}>
+                      {ap.reason || "No reason provided."}
+                    </div>
+                    <div style={{fontSize:11, color:"#aaa", marginTop:6}}>{fmtDate(ap.reviewed_at)}</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </div>
 
       {decideModal && (
-        <Modal title="Review Approval Request" onClose={() => setDecideModal(null)}>
-          <div className="alert alert-info" style={{marginBottom:14,fontSize:12}}>
-            <strong>{decideModal.req.agent_name}</strong>: {decideModal.req.from_stage} → {decideModal.req.to_stage}
-            <br/>Proposed by {decideModal.req.proposed_by} on {fmtDate(decideModal.req.proposed_at)}
-            {decideModal.req.eval_result_id && <><br/>✓ Eval result attached (ID: {decideModal.req.eval_result_id})</>}
+        <Modal title="Review Approval Request" large onClose={() => setDecideModal(null)}>
+          {/* Request summary */}
+          <div style={{background:"#f8f9fa", border:"1px solid #e9ecef", borderRadius:8, padding:14, marginBottom:16}}>
+            <div style={{display:"flex", alignItems:"center", gap:10, marginBottom:8}}>
+              <span style={{fontWeight:700, fontSize:14}}>{decideModal.req.agent_name}</span>
+              <span className="tag">{decideModal.req.request_type}</span>
+              <span style={{fontSize:13, color:"#555"}}>{decideModal.req.from_stage} → {decideModal.req.to_stage}</span>
+            </div>
+            <div style={{fontSize:12, color:"#888"}}>Requested by <strong style={{color:"#333"}}>{decideModal.req.proposed_by}</strong> on {fmtDate(decideModal.req.proposed_at)}</div>
+            {decideModal.req.eval_result_id && (
+              <div style={{marginTop:6, fontSize:12, color:"#2f9e44"}}>✓ Eval result attached (ID: {decideModal.req.eval_result_id})</div>
+            )}
           </div>
+
+          {/* Maker's comment */}
+          <div style={{marginBottom:16}}>
+            <div style={{fontSize:12, fontWeight:700, color:"#555", marginBottom:6}}>💬 Comment from Maker ({decideModal.req.proposed_by})</div>
+            {decideModal.req.notes
+              ? <div style={{fontSize:13, color:"#333", background:"#f8f9ff", border:"1px solid #e0e4f8", borderRadius:6, padding:"10px 14px", lineHeight:1.6}}>{decideModal.req.notes}</div>
+              : <div style={{fontSize:12, color:"#aaa", fontStyle:"italic"}}>No comment was added with this request.</div>}
+          </div>
+
           <form onSubmit={doDecide}>
             <div className="form-group">
-              <label>Decision</label>
+              <label>Your Decision</label>
               <select value={decideForm.decision} onChange={e => setDecideForm({...decideForm, decision: e.target.value})}>
-                <option value="approved">Approve</option>
-                <option value="rejected">Reject</option>
+                <option value="approved">✓ Approve</option>
+                <option value="rejected">✗ Reject</option>
               </select>
             </div>
             <div className="form-group">
@@ -1681,16 +1754,17 @@ function GovernanceQueueView({ onSelectAgent }) {
               <input value={decideForm.reviewed_by} onChange={e => setDecideForm({...decideForm, reviewed_by: e.target.value})} />
             </div>
             <div className="form-group">
-              <label>Reason</label>
-              <textarea required value={decideForm.reason}
+              <label>Your Comment / Reason <span style={{color:"#e03131",fontWeight:700}}>*</span></label>
+              <textarea required rows="3" value={decideForm.reason}
                 onChange={e => setDecideForm({...decideForm, reason: e.target.value})}
-                placeholder="Document your decision rationale (required)" />
+                placeholder="Document your decision rationale — this is recorded in the immutable audit log."
+                style={{minHeight:90}} />
             </div>
             {msg && <div className={`alert alert-${msg.type}`}>{msg.text}</div>}
             <div className="modal-actions">
               <button type="button" className="btn btn-outline" onClick={() => setDecideModal(null)}>Cancel</button>
               <button type="submit" className={`btn ${decideForm.decision==="approved"?"btn-success":"btn-danger"}`} disabled={submitting}>
-                {submitting ? "Submitting…" : decideForm.decision === "approved" ? "Approve" : "Reject"}
+                {submitting ? "Submitting…" : decideForm.decision === "approved" ? "✓ Approve Request" : "✗ Reject Request"}
               </button>
             </div>
           </form>

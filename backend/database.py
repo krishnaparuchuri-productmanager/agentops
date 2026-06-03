@@ -158,3 +158,7 @@ def migrate_db():
             conn.execute("ALTER TABLE agent_versions ADD COLUMN status TEXT NOT NULL DEFAULT 'draft'")
         if "changelog" not in existing_cols:
             conn.execute("ALTER TABLE agent_versions ADD COLUMN changelog TEXT")
+
+        approval_cols = [r[1] for r in conn.execute("PRAGMA table_info(approval_requests)").fetchall()]
+        if "notes" not in approval_cols:
+            conn.execute("ALTER TABLE approval_requests ADD COLUMN notes TEXT")
