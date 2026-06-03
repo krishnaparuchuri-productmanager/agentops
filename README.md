@@ -4,7 +4,7 @@ A **multi-agent governance platform** for managing AI agents across their full l
 
 Built as a learning-by-doing exercise in regulated-domain AI governance. The goal is not another agent — it's the governance layer *above* agents: lifecycle control, approval workflows, eval thresholds, cost dashboards, and topology visualisation for orchestrated agent systems.
 
-🔗 **Live demo:** [agentops.krishna1parchuri.workers.dev](https://agentops.krishna1parchuri.workers.dev)
+🔗 **Live demo:** [agentops.krishnaparuchuri.com](https://agentops.krishnaparuchuri.com)
 
 ---
 
@@ -69,7 +69,7 @@ Single-agent pharmaceutical QA assistant. Analysts paste a free-text deviation s
 | Agent ID | `sop-deviation-review` |
 | Model | `claude-haiku-4-5` |
 | Stage | In Production |
-| Live app | [pharmacomplianceai.krishna1parchuri.workers.dev](https://pharmacomplianceai.krishna1parchuri.workers.dev) |
+| Live app | [gmpdeviationreview.krishnaparuchuri.com](https://gmpdeviationreview.krishnaparuchuri.com) |
 
 ### 2 — MediAssist AI (Clinical Workflow)
 
@@ -233,9 +233,9 @@ See [`DECISIONS.md`](DECISIONS.md) for full rationale. Summary:
 | Service | Platform | URL |
 |---|---|---|
 | AgentOps backend | Railway | `https://agentops-production-980c.up.railway.app` |
-| AgentOps dashboard | Cloudflare Workers | `https://agentops.krishna1parchuri.workers.dev` |
+| AgentOps dashboard | Cloudflare Workers | `https://agentops.krishnaparuchuri.com` |
 | MediAssist AI | Cloudflare Workers | `https://medassist-ai.krishna1parchuri.workers.dev` |
-| GMP Deviation Review | Cloudflare Workers | `https://pharmacomplianceai.krishna1parchuri.workers.dev` |
+| GMP Deviation Review | Cloudflare Workers | `https://gmpdeviationreview.krishnaparuchuri.com` |
 
 ```bash
 # Deploy AgentOps frontend
