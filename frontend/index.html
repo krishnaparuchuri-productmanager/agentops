@@ -77,6 +77,44 @@
     /* Audit log */
     .audit-row { font-size: 12px; font-family: 'SF Mono', 'Fira Code', monospace; }
     .audit-action { font-weight: 700; color: #1a1a2e; }
+
+    /* ── Login screen ─────────────────────────────────────────────────────── */
+    .login-wrap {
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 60%, #0f3460 100%);
+    }
+    .login-card {
+      background: #fff; border-radius: 16px; padding: 44px 40px 36px;
+      width: 100%; max-width: 400px; box-shadow: 0 24px 64px rgba(0,0,0,0.35);
+    }
+    .login-logo {
+      width: 48px; height: 48px; border-radius: 12px;
+      background: linear-gradient(135deg, #3b5bdb, #7c9fff);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px; font-weight: 800; color: #fff; margin: 0 auto 20px;
+    }
+    .login-title { text-align: center; font-size: 20px; font-weight: 700; color: #1a1a2e; margin-bottom: 4px; }
+    .login-sub { text-align: center; font-size: 13px; color: #888; margin-bottom: 28px; }
+    .login-field { margin-bottom: 16px; }
+    .login-field label { display: block; font-size: 12px; font-weight: 600; color: #555; margin-bottom: 6px; }
+    .login-field input {
+      width: 100%; padding: 10px 14px; border: 1.5px solid #dde; border-radius: 8px;
+      font-size: 14px; font-family: inherit; transition: border-color 0.15s;
+    }
+    .login-field input:focus { outline: none; border-color: #3b5bdb; }
+    .login-field input.err { border-color: #e03131; }
+    .login-err { font-size: 12px; color: #e03131; margin-top: 4px; }
+    .login-btn {
+      width: 100%; padding: 11px; background: #3b5bdb; color: #fff; border: none;
+      border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;
+      margin-top: 8px; transition: background 0.15s;
+    }
+    .login-btn:hover { background: #2f4ac5; }
+    .login-hint { text-align: center; font-size: 11px; color: #aaa; margin-top: 20px; }
+    .nav-user { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+    .nav-username { font-size: 13px; color: #aab8d0; }
+    .nav-logout { font-size: 12px; color: #7c9fff; cursor: pointer; background: none; border: none; padding: 0; }
+    .nav-logout:hover { text-decoration: underline; }
     .audit-meta { color: #888; margin-top: 2px; }
 
     /* Decision badge */
@@ -2737,16 +2775,94 @@ function GovernanceQueueView({ onSelectAgent }) {
   );
 }
 
+// ── Login Screen ──────────────────────────────────────────────────────────
+
+function LoginScreen({ onLogin }) {
+  const [username, setUsername] = React.useState("");
+  const [password, setPassword] = React.useState("");
+  const [errors, setErrors]     = React.useState({});
+  const [shake, setShake]       = React.useState(false);
+
+  function validate() {
+    const e = {};
+    if (username.trim().length < 4) e.username = "Username must be at least 4 characters.";
+    if (password.length < 4)        e.password = "Password must be at least 4 characters.";
+    return e;
+  }
+
+  function handleSubmit(ev) {
+    ev.preventDefault();
+    const e = validate();
+    if (Object.keys(e).length) {
+      setErrors(e);
+      setShake(true);
+      setTimeout(() => setShake(false), 500);
+      return;
+    }
+    setErrors({});
+    onLogin(username.trim());
+  }
+
+  return (
+    <div className="login-wrap">
+      <div className="login-card" style={shake ? {animation:"shake 0.4s"} : {}}>
+        <div className="login-logo">A</div>
+        <div className="login-title">AgentOps</div>
+        <div className="login-sub">Cradle-to-Grave AI Governance Platform</div>
+        <form onSubmit={handleSubmit} noValidate>
+          <div className="login-field">
+            <label>Username</label>
+            <input
+              type="text" autoComplete="username" placeholder="Enter username"
+              className={errors.username ? "err" : ""}
+              value={username} onChange={e => setUsername(e.target.value)}
+            />
+            {errors.username && <div className="login-err">{errors.username}</div>}
+          </div>
+          <div className="login-field">
+            <label>Password</label>
+            <input
+              type="password" autoComplete="current-password" placeholder="Enter password"
+              className={errors.password ? "err" : ""}
+              value={password} onChange={e => setPassword(e.target.value)}
+            />
+            {errors.password && <div className="login-err">{errors.password}</div>}
+          </div>
+          <button type="submit" className="login-btn">Sign In</button>
+        </form>
+        <div className="login-hint">Demo mode · any credentials (min 4 chars each)</div>
+      </div>
+      <style>{`@keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-8px)}40%,80%{transform:translateX(8px)}}`}</style>
+    </div>
+  );
+}
+
 // ── App Shell ─────────────────────────────────────────────────────────────
 
 function App() {
-  const [view, setView] = React.useState("registry");
+  const [loggedIn, setLoggedIn]     = React.useState(() => !!sessionStorage.getItem("ao_user"));
+  const [username, setUsername]     = React.useState(() => sessionStorage.getItem("ao_user") || "");
+  const [view, setView]             = React.useState("registry");
   const [selectedAgent, setSelectedAgent] = React.useState(null);
+
+  function handleLogin(name) {
+    sessionStorage.setItem("ao_user", name);
+    setUsername(name);
+    setLoggedIn(true);
+  }
+
+  function handleLogout() {
+    sessionStorage.removeItem("ao_user");
+    setLoggedIn(false);
+    setUsername("");
+  }
 
   function selectAgent(id) {
     setSelectedAgent(id);
     setView("detail");
   }
+
+  if (!loggedIn) return <LoginScreen onLogin={handleLogin} />;
 
   return (
     <div>
@@ -2759,7 +2875,10 @@ function App() {
             Agent Detail
           </span>
         )}
-        <span style={{marginLeft:"auto",fontSize:12,color:"#556",opacity:0.6}}>Phase 1 · SOP Deviation Review</span>
+        <div className="nav-user">
+          <span className="nav-username">👤 {username}</span>
+          <button className="nav-logout" onClick={handleLogout}>Sign out</button>
+        </div>
       </nav>
       <div className="container">
         {view === "registry" && <RegistryView onSelectAgent={selectAgent} />}
