@@ -610,6 +610,101 @@ function AgentDetailView({ agentId }) {
   const [retireForm, setRetireForm] = React.useState({ proposed_by: "Governance User", reason: "", retirement_date: "" });
   const [submitting, setSubmitting] = React.useState(false);
 
+  // Alert action state
+  const [alertAction, setAlertAction]   = React.useState(null); // { alertId, type: 'extend'|'model' }
+  const [newCapValue, setNewCapValue]   = React.useState("");
+  const [newModelValue, setNewModelValue] = React.useState("");
+
+  // ── Alert action handlers ──────────────────────────────────────────────────
+
+  async function resolveAlert(alertId, resolvedBy = "Governance User") {
+    await apiFetch(`/agents/${agentId}/alerts/${alertId}/resolve?resolved_by=${encodeURIComponent(resolvedBy)}`, {
+      method: "POST", body: JSON.stringify({}),
+    });
+  }
+
+  async function patchClassification(patch, actor = "Governance User") {
+    // Merge patch into current classification and PATCH the agent
+    const current = typeof agent.classification === "string"
+      ? JSON.parse(agent.classification) : (agent.classification || {});
+    const updated = { ...current, ...patch };
+    await apiFetch(`/agents/${agentId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ classification: updated, actor }),
+    });
+  }
+
+  async function handleExtendCap(alertId) {
+    const cap = parseFloat(newCapValue);
+    if (!cap || cap <= 0) { setActionMsg({ type:"error", text:"Enter a valid cap amount." }); return; }
+    setSubmitting(true);
+    try {
+      const current = typeof agent.classification === "string" ? JSON.parse(agent.classification) : (agent.classification || {});
+      const oldCap  = current.budget_config?.max_cost_per_day || 0;
+      await patchClassification({
+        budget_config: { ...(current.budget_config || {}), max_cost_per_day: cap, cap_extended_at: new Date().toISOString(), cap_extended_from: oldCap }
+      });
+      await resolveAlert(alertId, "Governance User");
+      setAlertAction(null); setNewCapValue("");
+      setActionMsg({ type:"success", text:`Daily cap extended to $${cap.toFixed(3)}. Requests will resume within the new limit.` });
+      load();
+    } catch(e) { setActionMsg({ type:"error", text: e.message }); }
+    finally { setSubmitting(false); }
+  }
+
+  async function handlePauseRequests(alertId) {
+    if (!confirm("Pause all new deviation review requests until manually resumed?")) return;
+    setSubmitting(true);
+    try {
+      const current = typeof agent.classification === "string" ? JSON.parse(agent.classification) : (agent.classification || {});
+      await patchClassification({
+        budget_config: { ...(current.budget_config || {}), requests_paused: true, paused_at: new Date().toISOString() }
+      });
+      await resolveAlert(alertId, "Governance User");
+      setActionMsg({ type:"warn", text:"New requests are now paused. Existing in-flight reviews will complete. Resume from the Budget card on this page." });
+      load();
+    } catch(e) { setActionMsg({ type:"error", text: e.message }); }
+    finally { setSubmitting(false); }
+  }
+
+  async function handleResumeRequests() {
+    setSubmitting(true);
+    try {
+      const current = typeof agent.classification === "string" ? JSON.parse(agent.classification) : (agent.classification || {});
+      const bc = { ...(current.budget_config || {}) };
+      delete bc.requests_paused; delete bc.paused_at;
+      await patchClassification({ budget_config: bc });
+      setActionMsg({ type:"success", text:"Requests resumed. New deviation reviews will be processed normally." });
+      load();
+    } catch(e) { setActionMsg({ type:"error", text: e.message }); }
+    finally { setSubmitting(false); }
+  }
+
+  async function handleSwitchModel(alertId) {
+    if (!newModelValue) { setActionMsg({ type:"error", text:"Select a model." }); return; }
+    setSubmitting(true);
+    try {
+      const current = typeof agent.classification === "string" ? JSON.parse(agent.classification) : (agent.classification || {});
+      const oldModel = current.model;
+      await patchClassification({ model: newModelValue, previous_model: oldModel, model_switched_at: new Date().toISOString() });
+      await resolveAlert(alertId, "Governance User");
+      setAlertAction(null); setNewModelValue("");
+      setActionMsg({ type:"success", text:`Model switched from ${oldModel} to ${newModelValue}. New reviews will use the lower-cost model.` });
+      load();
+    } catch(e) { setActionMsg({ type:"error", text: e.message }); }
+    finally { setSubmitting(false); }
+  }
+
+  async function handleDismissAlert(alertId) {
+    setSubmitting(true);
+    try {
+      await resolveAlert(alertId, "Governance User");
+      setActionMsg({ type:"success", text:"Alert dismissed." });
+      load();
+    } catch(e) { setActionMsg({ type:"error", text: e.message }); }
+    finally { setSubmitting(false); }
+  }
+
   async function load() {
     try {
       const [a, vs, ev, cs, al, ap, tr, alrt] = await Promise.all([
@@ -937,6 +1032,92 @@ function AgentDetailView({ agentId }) {
                                 Resolved by {alert.resolved_by} · {fmtDate(alert.resolved_at)}
                               </div>
                             )}
+
+                            {/* ── Action panel — cost_threshold ── */}
+                            {!isResolved && alert.alert_type === "cost_threshold" && (
+                              <div style={{marginTop:12, paddingTop:12, borderTop:"1px solid "+border}}>
+                                {alertAction?.alertId === alert.id && alertAction.type === "extend" ? (
+                                  <div>
+                                    <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:8}}>Set new daily cap (USD) — current: ${alert.metadata?.daily_cap_usd?.toFixed(3) ?? "?"}</div>
+                                    <div style={{display:"flex", gap:8, alignItems:"center", flexWrap:"wrap"}}>
+                                      <input type="number" step="0.001" min="0" placeholder="e.g. 0.025"
+                                        value={newCapValue} onChange={e => setNewCapValue(e.target.value)}
+                                        style={{width:140, marginBottom:0}} autoFocus />
+                                      <select value={newModelValue} onChange={e => setNewModelValue(e.target.value)} style={{width:200, marginBottom:0}}>
+                                        <option value="">Keep current model</option>
+                                        <option value="claude-haiku-4-5">claude-haiku-4-5 (cheapest)</option>
+                                        <option value="claude-3-haiku-20240307">claude-3-haiku-20240307</option>
+                                        <option value="gpt-4o-mini">gpt-4o-mini</option>
+                                        <option value="mistral-7b">mistral-7b</option>
+                                      </select>
+                                      <button className="btn btn-primary btn-sm" disabled={submitting} onClick={() => handleExtendCap(alert.id)}>
+                                        ✓ Confirm Extension
+                                      </button>
+                                      <button className="btn btn-outline btn-sm" onClick={() => setAlertAction(null)}>Cancel</button>
+                                    </div>
+                                    <div style={{fontSize:11, color:"#6b7280", marginTop:6}}>
+                                      Optionally switch to a lower-cost model for the remainder of today's reviews.
+                                    </div>
+                                  </div>
+                                ) : alertAction?.alertId === alert.id && alertAction.type === "model" ? (
+                                  <div>
+                                    <div style={{fontSize:12,fontWeight:600,color:"#374151",marginBottom:8}}>Switch to lower-cost model for remainder of today</div>
+                                    <div style={{display:"flex", gap:8, alignItems:"center"}}>
+                                      <select value={newModelValue} onChange={e => setNewModelValue(e.target.value)} style={{width:220, marginBottom:0}} autoFocus>
+                                        <option value="">Select model…</option>
+                                        <option value="claude-haiku-4-5">claude-haiku-4-5 (~60% cheaper)</option>
+                                        <option value="claude-3-haiku-20240307">claude-3-haiku-20240307</option>
+                                        <option value="gpt-4o-mini">gpt-4o-mini</option>
+                                        <option value="mistral-7b">mistral-7b (open source)</option>
+                                      </select>
+                                      <button className="btn btn-primary btn-sm" disabled={submitting} onClick={() => handleSwitchModel(alert.id)}>Switch Model</button>
+                                      <button className="btn btn-outline btn-sm" onClick={() => setAlertAction(null)}>Cancel</button>
+                                    </div>
+                                    <div style={{fontSize:11, color:"#6b7280", marginTop:6}}>
+                                      In-flight reviews complete as-is. New requests use the selected model until manually changed back.
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div>
+                                    <div style={{fontSize:12, color:"#374151", fontWeight:600, marginBottom:8}}>Choose a governance action:</div>
+                                    <div style={{display:"flex", gap:8, flexWrap:"wrap"}}>
+                                      <button className="btn btn-primary btn-sm"
+                                        onClick={() => { setAlertAction({ alertId: alert.id, type:"extend" }); setNewCapValue(""); setNewModelValue(""); }}>
+                                        ↑ Extend Daily Cap
+                                      </button>
+                                      <button className="btn btn-sm" style={{background:"#7c3aed",color:"#fff"}}
+                                        onClick={() => { setAlertAction({ alertId: alert.id, type:"model" }); setNewModelValue(""); }}>
+                                        ⚡ Switch to Lower-Cost Model
+                                      </button>
+                                      <button className="btn btn-danger btn-sm" disabled={submitting}
+                                        onClick={() => handlePauseRequests(alert.id)}>
+                                        ⏸ Pause New Requests
+                                      </button>
+                                      <button className="btn btn-outline btn-sm" disabled={submitting}
+                                        onClick={() => handleDismissAlert(alert.id)}>
+                                        Dismiss
+                                      </button>
+                                    </div>
+                                    <div style={{fontSize:11, color:"#9ca3af", marginTop:8, lineHeight:1.5}}>
+                                      <strong>Extend cap</strong> — allow more spend today up to a new limit you set. &nbsp;·&nbsp;
+                                      <strong>Switch model</strong> — complete remaining reviews at lower cost. &nbsp;·&nbsp;
+                                      <strong>Pause</strong> — block new requests until tomorrow or manual resume.
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* ── Action panel — other alert types ── */}
+                            {!isResolved && alert.alert_type !== "cost_threshold" && (
+                              <div style={{marginTop:10, display:"flex", gap:8}}>
+                                <button className="btn btn-outline btn-sm" disabled={submitting}
+                                  onClick={() => handleDismissAlert(alert.id)}>
+                                  ✓ Acknowledge &amp; Dismiss
+                                </button>
+                              </div>
+                            )}
+
                           </div>
                         </div>
                       </div>
@@ -1022,8 +1203,15 @@ function AgentDetailView({ agentId }) {
 
           {/* Budget & Token Limits card */}
           {cls.budget_config && Object.keys(cls.budget_config).length > 0 && (
-            <div className="card" style={{marginTop:16, borderLeft:"4px solid #3b5bdb"}}>
-              <div className="card-title" style={{marginBottom:12}}>💰 Budget & Token Limits</div>
+            <div className="card" style={{marginTop:16, borderLeft:`4px solid ${cls.budget_config.requests_paused ? "#e03131" : "#3b5bdb"}`}}>
+              <div className="card-header" style={{marginBottom:12}}>
+                <div className="card-title">💰 Budget & Token Limits
+                  {cls.budget_config.requests_paused && <span style={{marginLeft:10,background:"#fef2f2",color:"#991b1b",border:"1px solid #fca5a5",borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:600}}>⏸ REQUESTS PAUSED</span>}
+                </div>
+                {cls.budget_config.requests_paused && (
+                  <button className="btn btn-success btn-sm" disabled={submitting} onClick={handleResumeRequests}>▶ Resume Requests</button>
+                )}
+              </div>
               <div className="grid-2" style={{gap:0}}>
                 {cls.budget_config.max_tokens_per_call && (
                   <div className="info-row">
@@ -1061,8 +1249,18 @@ function AgentDetailView({ agentId }) {
                   </div>
                 )}
               </div>
+              {cls.budget_config.cap_extended_at && (
+                <div style={{marginTop:8, fontSize:11, color:"#d97706", background:"#fffbeb", border:"1px solid #fde68a", borderRadius:6, padding:"6px 10px"}}>
+                  ⚠ Cap was extended from ${cls.budget_config.cap_extended_from?.toFixed(3) ?? "?"} → ${cls.budget_config.max_cost_per_day?.toFixed(3)} on {fmtDate(cls.budget_config.cap_extended_at)}
+                </div>
+              )}
+              {cls.budget_config.model_switched_at && (
+                <div style={{marginTop:6, fontSize:11, color:"#7c3aed", background:"#f5f3ff", border:"1px solid #ddd6fe", borderRadius:6, padding:"6px 10px"}}>
+                  ⚡ Model switched from {cls.budget_config.previous_model ?? "previous"} on {fmtDate(cls.budget_config.model_switched_at)}
+                </div>
+              )}
               <div style={{fontSize:11,color:"#888",marginTop:10}}>
-                These are platform-enforced operational limits, not LLM instructions. Agent is paused automatically if daily cap is exceeded.
+                Platform-enforced operational limits. Use the alert actions above to extend, pause, or switch models when thresholds are breached.
               </div>
             </div>
           )}
