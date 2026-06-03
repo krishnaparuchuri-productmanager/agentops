@@ -54,10 +54,10 @@ def seed():
             ),
         )
 
-        # ── 2. Register version 1.0.0 ─────────────────────────────────────
+        # ── 2. Register version 1.0.0 (active) ───────────────────────────
         conn.execute(
-            """INSERT INTO agent_versions(agent_id, version, model, config_snapshot, created_at, created_by)
-               VALUES (?,?,?,?,?,?)""",
+            """INSERT INTO agent_versions(agent_id, version, model, config_snapshot, changelog, status, created_at, created_by)
+               VALUES (?,?,?,?,?,?,?,?)""",
             (
                 AGENT_ID,
                 "1.0.0",
@@ -68,7 +68,12 @@ def seed():
                     "tool_use": "forced",
                     "fallback": "escalate by default",
                     "retry_policy": "retry-with-validation on parse error",
+                    "eval_threshold": 0.80,
+                    "guardrails": ["Always escalate on ambiguous evidence", "No PII in output"],
+                    "golden_rules": ["Cite applicable SOP by name and clause", "State severity classification with justification"],
                 }),
+                "Initial production release — TF-IDF retrieval, 15 golden cases, 87% pass rate.",
+                "active",
                 (now - timedelta(days=30)).isoformat(timespec="seconds"),
                 "Krishna Paruchuri",
             ),

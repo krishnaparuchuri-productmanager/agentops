@@ -33,7 +33,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from database import db, init_db
+from database import db, init_db, migrate_db
 from lifecycle import validate_transition, allowed_next_stages, TransitionError
 
 app = FastAPI(title="AgentOps: Cradle to Grave", version="1.0.0")
@@ -50,6 +50,7 @@ app.add_middleware(
 @app.on_event("startup")
 def startup():
     init_db()
+    migrate_db()
     # Auto-seed on first run (no agents in DB = fresh deployment)
     from database import get_connection
     conn = get_connection()
@@ -108,7 +109,12 @@ class VersionCreate(BaseModel):
     version: str
     model: Optional[str] = None
     config_snapshot: Optional[dict] = None
+    changelog: Optional[str] = None
     created_by: str
+
+
+class VersionActivate(BaseModel):
+    activated_by: str = "Governance User"
 
 
 class TransitionRequest(BaseModel):
@@ -276,12 +282,38 @@ def create_version(agent_id: str, body: VersionCreate):
     with db() as conn:
         _ensure_agent(conn, agent_id)
         conn.execute(
-            "INSERT INTO agent_versions(agent_id, version, model, config_snapshot, created_by) VALUES (?,?,?,?,?)",
-            (agent_id, body.version, body.model, json.dumps(body.config_snapshot or {}), body.created_by),
+            "INSERT INTO agent_versions(agent_id, version, model, config_snapshot, changelog, status, created_by) VALUES (?,?,?,?,?,?,?)",
+            (agent_id, body.version, body.model, json.dumps(body.config_snapshot or {}),
+             body.changelog, "draft", body.created_by),
         )
         _audit(conn, agent_id, body.created_by, "VERSION_REGISTERED",
-               {"version": body.version, "model": body.model})
-    return {"agent_id": agent_id, "version": body.version}
+               {"version": body.version, "model": body.model, "changelog": body.changelog})
+    return {"agent_id": agent_id, "version": body.version, "status": "draft"}
+
+
+@app.post("/agents/{agent_id}/versions/{version}/activate")
+def activate_version(agent_id: str, version: str, body: VersionActivate = None):
+    if body is None:
+        body = VersionActivate()
+    with db() as conn:
+        _ensure_agent(conn, agent_id)
+        ver = conn.execute(
+            "SELECT * FROM agent_versions WHERE agent_id=? AND version=?", (agent_id, version)
+        ).fetchone()
+        if not ver:
+            raise HTTPException(404, f"Version '{version}' not found for agent '{agent_id}'")
+        # Roll back any currently active version
+        conn.execute(
+            "UPDATE agent_versions SET status='rolled_back' WHERE agent_id=? AND status='active'",
+            (agent_id,)
+        )
+        # Activate this version
+        conn.execute(
+            "UPDATE agent_versions SET status='active' WHERE agent_id=? AND version=?",
+            (agent_id, version)
+        )
+        _audit(conn, agent_id, body.activated_by, "VERSION_ACTIVATED", {"version": version})
+    return {"agent_id": agent_id, "version": version, "status": "active"}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -55,6 +55,8 @@ CREATE TABLE IF NOT EXISTS agent_versions (
     version         TEXT NOT NULL,             -- semver string e.g. "1.0.0"
     model           TEXT,                      -- e.g. "claude-haiku-4-5"
     config_snapshot TEXT,                      -- JSON dump of agent config at this version
+    status          TEXT NOT NULL DEFAULT 'draft', -- draft | active | rolled_back
+    changelog       TEXT,                      -- what changed in this version
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     created_by      TEXT NOT NULL,
     UNIQUE(agent_id, version)
@@ -146,3 +148,13 @@ CREATE INDEX IF NOT EXISTS idx_cost_agent_date ON cost_records(agent_id, recorde
 def init_db():
     with db() as conn:
         conn.executescript(SCHEMA)
+
+
+def migrate_db():
+    """Safely add new columns to existing tables without dropping data."""
+    with db() as conn:
+        existing_cols = [r[1] for r in conn.execute("PRAGMA table_info(agent_versions)").fetchall()]
+        if "status" not in existing_cols:
+            conn.execute("ALTER TABLE agent_versions ADD COLUMN status TEXT NOT NULL DEFAULT 'draft'")
+        if "changelog" not in existing_cols:
+            conn.execute("ALTER TABLE agent_versions ADD COLUMN changelog TEXT")

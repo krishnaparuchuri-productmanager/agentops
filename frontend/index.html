@@ -517,6 +517,7 @@ function RegistryView({ onSelectAgent }) {
 
 function AgentDetailView({ agentId }) {
   const [agent, setAgent] = React.useState(null);
+  const [versions, setVersions] = React.useState([]);
   const [evals, setEvals] = React.useState([]);
   const [costs, setCosts] = React.useState(null);
   const [auditLog, setAuditLog] = React.useState([]);
@@ -531,6 +532,11 @@ function AgentDetailView({ agentId }) {
   const [showEdit, setShowEdit] = React.useState(false);
   const [editStep, setEditStep] = React.useState(1);
   const [editForm, setEditForm] = React.useState({});
+  const [showNewVersion, setShowNewVersion] = React.useState(false);
+  const [versionStep, setVersionStep] = React.useState(1);
+  const [versionForm, setVersionForm] = React.useState({ version:"", model:"", changelog:"", created_by:"Governance User", eval_threshold:0.80, guardrails:[], golden_rules:[] });
+  const [allAgents, setAllAgents] = React.useState([]);
+  const [copyFrom, setCopyFrom] = React.useState("");
   const [actionMsg, setActionMsg] = React.useState(null);
 
   const [transForm, setTransForm] = React.useState({ to_stage: "", reason: "", triggered_by: "Governance User" });
@@ -542,14 +548,16 @@ function AgentDetailView({ agentId }) {
 
   async function load() {
     try {
-      const [a, ev, cs, al, ap] = await Promise.all([
+      const [a, vs, ev, cs, al, ap] = await Promise.all([
         apiFetch(`/agents/${agentId}`),
+        apiFetch(`/agents/${agentId}/versions`),
         apiFetch(`/agents/${agentId}/evals`),
         apiFetch(`/agents/${agentId}/costs`),
         apiFetch(`/agents/${agentId}/audit`),
         apiFetch(`/agents/${agentId}/approvals`),
       ]);
       setAgent(a);
+      setVersions(vs);
       setEvals(ev);
       setCosts(cs);
       setAuditLog(al);
@@ -653,6 +661,47 @@ function AgentDetailView({ agentId }) {
     } finally { setSubmitting(false); }
   }
 
+  async function openNewVersion() {
+    setVersionStep(1);
+    setVersionForm({ version:"", model: cls?.model||"", changelog:"", created_by:"Governance User", eval_threshold: cls?.eval_threshold||0.80, guardrails: cls?.guardrails||[], golden_rules: cls?.golden_rules||[] });
+    setCopyFrom("");
+    try { const a = await apiFetch("/agents"); setAllAgents(a.filter(a => a.id !== agentId)); } catch(_) {}
+    setShowNewVersion(true);
+  }
+
+  async function handleCopyFrom(fromId) {
+    setCopyFrom(fromId);
+    if (!fromId) return;
+    try {
+      const a = await apiFetch(`/agents/${fromId}`);
+      const c = typeof a.classification === "string" ? JSON.parse(a.classification) : (a.classification || {});
+      setVersionForm(f => ({ ...f, eval_threshold: c.eval_threshold||f.eval_threshold, guardrails: c.guardrails||[], golden_rules: c.golden_rules||[], model: c.model||f.model }));
+    } catch(_) {}
+  }
+
+  async function submitNewVersion(e) {
+    e.preventDefault();
+    setSubmitting(true);
+    setActionMsg(null);
+    try {
+      const config_snapshot = { eval_threshold: parseFloat(versionForm.eval_threshold), guardrails: versionForm.guardrails, golden_rules: versionForm.golden_rules };
+      await apiFetch(`/agents/${agentId}/versions`, { method:"POST", body: JSON.stringify({ version: versionForm.version, model: versionForm.model, changelog: versionForm.changelog, created_by: versionForm.created_by, config_snapshot }) });
+      setActionMsg({ type:"success", text:`Version ${versionForm.version} created as Draft.` });
+      setShowNewVersion(false);
+      load();
+    } catch(e) { setActionMsg({ type:"error", text: e.message }); }
+    finally { setSubmitting(false); }
+  }
+
+  async function activateVersion(version) {
+    if (!confirm(`Activate version ${version}? The current active version will be rolled back.`)) return;
+    try {
+      await apiFetch(`/agents/${agentId}/versions/${version}/activate`, { method:"POST", body: JSON.stringify({ activated_by: "Governance User" }) });
+      setActionMsg({ type:"success", text:`Version ${version} is now Active.` });
+      load();
+    } catch(e) { setActionMsg({ type:"error", text: e.message }); }
+  }
+
   if (error) return <div className="alert alert-error">{error}</div>;
   if (!agent) return <div className="loading">Loading agent…</div>;
 
@@ -703,7 +752,7 @@ function AgentDetailView({ agentId }) {
 
       {/* Tabs */}
       <div style={{display:"flex", gap:2, marginBottom:16, borderBottom:"2px solid #eee"}}>
-        {["overview","evals","costs","approvals","audit"].map(t => (
+        {["overview","versions","evals","costs","approvals","audit"].map(t => (
           <button key={t} onClick={() => setTab(t)}
             style={{padding:"8px 16px", background:"none", border:"none", cursor:"pointer",
               borderBottom: tab===t ? "2px solid #3b5bdb" : "2px solid transparent",
@@ -792,6 +841,70 @@ function AgentDetailView({ agentId }) {
                 ? <ol style={{paddingLeft:18,margin:0}}>{cls.golden_rules.map((r,i) => <li key={i} style={{fontSize:13,color:"#444",marginBottom:6,lineHeight:1.5}}>{r}</li>)}</ol>
                 : <div className="empty" style={{padding:"12px 0"}}>No golden rules defined</div>}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tab: Versions */}
+      {tab === "versions" && (
+        <div>
+          {/* Active version banner */}
+          {(() => { const active = versions.find(v => v.status === "active"); return active ? (
+            <div className="card" style={{borderLeft:"4px solid #2f9e44", marginBottom:16}}>
+              <div style={{display:"flex", alignItems:"center", justifyContent:"space-between"}}>
+                <div>
+                  <div style={{fontSize:12,color:"#888",marginBottom:2}}>Currently Active Version</div>
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    <span style={{fontSize:20,fontWeight:700}}>{active.version}</span>
+                    <span className="tag">{active.model || "no model set"}</span>
+                    <span className="decision-approved" style={{fontSize:12}}>● Active</span>
+                  </div>
+                  {active.changelog && <div style={{fontSize:12,color:"#555",marginTop:4}}>{active.changelog}</div>}
+                </div>
+                <div style={{fontSize:12,color:"#888"}}>By {active.created_by} · {fmtDate(active.created_at)}</div>
+              </div>
+            </div>
+          ) : null; })()}
+          <div className="card">
+            <div className="card-header">
+              <div className="card-title">Version History</div>
+              <button className="btn btn-primary btn-sm" onClick={openNewVersion}>+ New Version</button>
+            </div>
+            {versions.length === 0 ? <div className="empty">No versions registered yet.</div> : (
+              <table>
+                <thead><tr><th>Version</th><th>Status</th><th>Model</th><th>Changelog</th><th>Created By</th><th>Date</th><th>Action</th></tr></thead>
+                <tbody>
+                  {versions.map(v => {
+                    const cfg = v.config_snapshot ? (typeof v.config_snapshot === "string" ? JSON.parse(v.config_snapshot) : v.config_snapshot) : {};
+                    return (
+                      <tr key={v.id}>
+                        <td><span className="tag" style={{fontSize:13}}>{v.version}</span></td>
+                        <td>
+                          {v.status === "active"
+                            ? <span className="decision-approved">● Active</span>
+                            : v.status === "rolled_back"
+                            ? <span style={{color:"#888",fontSize:12}}>Rolled Back</span>
+                            : <span style={{color:"#e67700",fontWeight:600,fontSize:12}}>Draft</span>}
+                        </td>
+                        <td style={{fontSize:12}}>{v.model || "—"}</td>
+                        <td style={{fontSize:12,color:"#555",maxWidth:220}}>{v.changelog || "—"}</td>
+                        <td style={{fontSize:12,color:"#888"}}>{v.created_by}</td>
+                        <td style={{fontSize:12,color:"#888"}}>{fmtDate(v.created_at)}</td>
+                        <td>
+                          {v.status === "draft" && (
+                            <button className="btn btn-success btn-sm" onClick={() => activateVersion(v.version)}>Activate</button>
+                          )}
+                          {v.status === "active" && <span style={{fontSize:11,color:"#aaa"}}>Live</span>}
+                          {v.status === "rolled_back" && (
+                            <button className="btn btn-outline btn-sm" onClick={() => activateVersion(v.version)}>Re-activate</button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
           </div>
         </div>
       )}
@@ -929,6 +1042,85 @@ function AgentDetailView({ agentId }) {
             </table>
           )}
         </div>
+      )}
+
+      {/* Modal: New Version */}
+      {showNewVersion && (
+        <Modal title="Register New Version" large onClose={() => setShowNewVersion(false)}>
+          <div className="modal-steps">
+            {["Version Info","Config & Rules"].map((s,i) => (
+              <div key={s} className={`modal-step-item ${versionStep===i+1?"active":versionStep>i+1?"done":""}`}>
+                {versionStep>i+1?"✓ ":""}{i+1}. {s}
+              </div>
+            ))}
+          </div>
+          <form onSubmit={versionStep < 2 ? (e=>{e.preventDefault();setVersionStep(2);}) : submitNewVersion}>
+            {versionStep === 1 && (<>
+              <div className="grid-2" style={{gap:10}}>
+                <div className="form-group">
+                  <label>Version Number</label>
+                  <input required placeholder="e.g. 2.0.0" value={versionForm.version}
+                    onChange={e => setVersionForm({...versionForm, version: e.target.value})} />
+                </div>
+                <div className="form-group">
+                  <label>Created By</label>
+                  <input value={versionForm.created_by}
+                    onChange={e => setVersionForm({...versionForm, created_by: e.target.value})} />
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Primary Model</label>
+                <select value={versionForm.model} onChange={e => setVersionForm({...versionForm, model: e.target.value})}>
+                  <option value="">— select a model —</option>
+                  {MODEL_OPTIONS.map(g => (
+                    <optgroup key={g.group} label={g.group}>
+                      {g.models.map(m => <option key={m} value={m}>{m}</option>)}
+                    </optgroup>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group">
+                <label>Changelog — what's new in this version</label>
+                <textarea required placeholder="e.g. Upgraded to claude-sonnet-4-5, improved CAPA classification accuracy, added structured output validation." value={versionForm.changelog}
+                  onChange={e => setVersionForm({...versionForm, changelog: e.target.value})} style={{minHeight:90}} />
+              </div>
+            </>)}
+            {versionStep === 2 && (<>
+              {/* Copy from agent */}
+              <div className="card" style={{background:"#f8f9fa",boxShadow:"none",border:"1.5px dashed #ccc",marginBottom:16}}>
+                <div style={{fontSize:12,fontWeight:700,color:"#555",marginBottom:8}}>⚡ Optional — Copy config from an existing agent</div>
+                <div style={{fontSize:12,color:"#888",marginBottom:10}}>Pre-fills eval threshold, guardrails and golden rules from another agent. You can edit everything after.</div>
+                <select value={copyFrom} onChange={e => handleCopyFrom(e.target.value)}>
+                  <option value="">— start fresh —</option>
+                  {allAgents.map(a => <option key={a.id} value={a.id}>{a.name} ({a.id})</option>)}
+                </select>
+              </div>
+              <div className="form-group">
+                <label>Eval Pass Threshold (%)</label>
+                <input type="number" min="0" max="100" step="1" value={Math.round((versionForm.eval_threshold||0.8)*100)}
+                  onChange={e => setVersionForm({...versionForm, eval_threshold: parseFloat(e.target.value)/100})} />
+              </div>
+              <div className="form-group">
+                <label>Guardrails</label>
+                <ChipInput value={versionForm.guardrails} onChange={v => setVersionForm({...versionForm, guardrails: v})}
+                  placeholder="e.g. No PII in output" color="chip-orange" />
+              </div>
+              <div className="form-group" style={{marginTop:14}}>
+                <label>Golden Rules</label>
+                <ChipInput value={versionForm.golden_rules} onChange={v => setVersionForm({...versionForm, golden_rules: v})}
+                  placeholder="e.g. Always cite source document" color="chip-green" />
+              </div>
+            </>)}
+            {actionMsg && showNewVersion && <div className={`alert alert-${actionMsg.type}`}>{actionMsg.text}</div>}
+            <div className="modal-actions">
+              <button type="button" className="btn btn-outline" onClick={() => setShowNewVersion(false)}>Cancel</button>
+              {versionStep > 1 && <button type="button" className="btn btn-outline" onClick={() => setVersionStep(1)}>← Back</button>}
+              <button type="submit" className="btn btn-primary" disabled={submitting}>
+                {versionStep < 2 ? "Next →" : submitting ? "Creating…" : "Create Version"}
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
 
       {/* Modal: Edit Agent */}
