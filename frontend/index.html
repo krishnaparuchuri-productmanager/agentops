@@ -137,6 +137,31 @@
     .clickable { cursor: pointer; color: #3b5bdb; font-weight: 500; }
     .clickable:hover { text-decoration: underline; }
 
+    /* Topology card */
+    .topology-card { background: #f8f9ff; border: 1.5px solid #c5cef7; border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+    .topology-title { font-size: 12px; font-weight: 700; color: #3b5bdb; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 14px; }
+    .topology-flow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .topology-router { background: #3b5bdb; color: #fff; border-radius: 8px; padding: 8px 14px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+    .topology-router-model { font-size: 10px; opacity: 0.8; margin-top: 2px; }
+    .topology-arrow { color: #3b5bdb; font-size: 20px; font-weight: 700; flex-shrink: 0; }
+    .topology-agents { display: flex; flex-wrap: wrap; gap: 8px; }
+    .topology-chip { background: #fff; border: 1.5px solid #c5cef7; border-radius: 8px; padding: 6px 12px; font-size: 12px; font-weight: 600; color: #1a1a2e; cursor: pointer; transition: all 0.15s; }
+    .topology-chip:hover { border-color: #3b5bdb; color: #3b5bdb; background: #eef1ff; }
+    .topology-chip-model { font-size: 10px; color: #888; font-weight: 400; margin-top: 1px; }
+
+    /* Parent badge */
+    .parent-badge { display: inline-flex; align-items: center; gap: 6px; background: #eef1ff; color: #3b5bdb; border: 1.5px solid #c5cef7; border-radius: 6px; padding: 4px 10px; font-size: 12px; font-weight: 600; cursor: pointer; margin-left: 8px; transition: all 0.15s; }
+    .parent-badge:hover { background: #dde3ff; }
+
+    /* Eval dimension bars */
+    .dim-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12px; }
+    .dim-label { min-width: 160px; color: #555; text-transform: capitalize; }
+    .dim-bar-bg { flex: 1; background: #f0f0f0; border-radius: 4px; height: 6px; }
+    .dim-bar-red    { height: 6px; border-radius: 4px; background: #e03131; }
+    .dim-bar-amber  { height: 6px; border-radius: 4px; background: #f59f00; }
+    .dim-bar-green  { height: 6px; border-radius: 4px; background: #2f9e44; }
+    .dim-score { min-width: 32px; text-align: right; font-weight: 600; color: #333; }
+
     .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; background: #eef1ff; color: #3b5bdb; margin-right: 4px; }
     .tag-red { background: #fff5f5; color: #e03131; }
     .tag-green { background: #ebfbee; color: #2f9e44; }
@@ -573,7 +598,42 @@ function RegistryView({ onSelectAgent }) {
 
 // ── Agent Detail View ─────────────────────────────────────────────────────
 
-function AgentDetailView({ agentId }) {
+// ── Topology Card ─────────────────────────────────────────────────────────────
+function AgentTopologyCard({ routerAgent, cls, allAgents, onSelectAgent }) {
+  if (!cls?.sub_agents?.length) return null;
+  const routerCls = typeof routerAgent.classification === "string"
+    ? JSON.parse(routerAgent.classification) : (routerAgent.classification || {});
+  return (
+    <div className="topology-card">
+      <div className="topology-title">🔀 Agent Topology</div>
+      <div className="topology-flow">
+        <div className="topology-router" onClick={() => onSelectAgent(routerAgent.id)} style={{cursor:"pointer"}}>
+          <div>{routerAgent.name}</div>
+          <div className="topology-router-model">{routerCls.model || "router"}</div>
+        </div>
+        <div className="topology-arrow">→</div>
+        <div className="topology-agents">
+          {cls.sub_agents.map(subId => {
+            const sub = allAgents.find(a => a.id === subId);
+            if (!sub) return <div key={subId} className="topology-chip"><div>{subId}</div></div>;
+            const subCls = typeof sub.classification === "string"
+              ? JSON.parse(sub.classification) : (sub.classification || {});
+            return (
+              <div key={subId} className="topology-chip" onClick={() => onSelectAgent(sub.id)}>
+                <div>{sub.name.replace("MediAssist ", "")}</div>
+                <div className="topology-chip-model">
+                  {subCls.model?.replace("claude-","") || "—"} · <span className={stageCssClass(sub.current_stage)}>{sub.current_stage}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AgentDetailView({ agentId, onSelectAgent }) {
   const [agent, setAgent] = React.useState(null);
   const [versions, setVersions] = React.useState([]);
   const [evals, setEvals] = React.useState([]);
@@ -707,7 +767,7 @@ function AgentDetailView({ agentId }) {
 
   async function load() {
     try {
-      const [a, vs, ev, cs, al, ap, tr, alrt] = await Promise.all([
+      const [a, vs, ev, cs, al, ap, tr, alrt, allA] = await Promise.all([
         apiFetch(`/agents/${agentId}`),
         apiFetch(`/agents/${agentId}/versions`),
         apiFetch(`/agents/${agentId}/evals`),
@@ -716,6 +776,7 @@ function AgentDetailView({ agentId }) {
         apiFetch(`/agents/${agentId}/approvals`),
         apiFetch(`/agents/${agentId}/traces?limit=100`),
         apiFetch(`/agents/${agentId}/alerts?active_only=false&limit=20`),
+        apiFetch(`/agents`),
       ]);
       setAgent(a);
       setVersions(vs);
@@ -725,6 +786,7 @@ function AgentDetailView({ agentId }) {
       setApprovals(ap);
       setTraces(tr);
       setAlerts(alrt);
+      setAllAgents(Array.isArray(allA) ? allA : []);
     } catch (e) {
       setError(e.message);
     }
@@ -911,6 +973,17 @@ function AgentDetailView({ agentId }) {
           <div style={{fontSize:12,color:"#888"}}>{agent.id} · owner: {agent.owner}</div>
         </div>
         <span className={stageCssClass(agent.current_stage)} style={{fontSize:13}}>{agent.current_stage}</span>
+        {(() => {
+          const cls = typeof agent.classification === "string" ? JSON.parse(agent.classification) : (agent.classification || {});
+          const parentId = cls.parent_agent_id;
+          if (!parentId) return null;
+          const parentAgent = allAgents.find(a => a.id === parentId);
+          return (
+            <span className="parent-badge" onClick={() => onSelectAgent && onSelectAgent(parentId)}>
+              ↑ {parentAgent ? parentAgent.name : parentId}
+            </span>
+          );
+        })()}
         <div style={{marginLeft:"auto", display:"flex", gap:8}}>
           <button className="btn btn-outline btn-sm" onClick={openEdit}>✏️ Edit</button>
           <button className="btn btn-outline btn-sm" onClick={() => setShowTransition(true)}>Move Stage</button>
@@ -972,6 +1045,13 @@ function AgentDetailView({ agentId }) {
       {/* Tab: Overview */}
       {tab === "overview" && (
         <div>
+
+          {/* ── Topology Card (Router agents only) ──────────────────── */}
+          {(() => {
+            const cls = typeof agent.classification === "string" ? JSON.parse(agent.classification) : (agent.classification || {});
+            if (!cls?.sub_agents?.length) return null;
+            return <AgentTopologyCard routerAgent={agent} cls={cls} allAgents={allAgents} onSelectAgent={onSelectAgent} />;
+          })()}
 
           {/* ── Active Alerts ────────────────────────────────────────── */}
           {alerts.length > 0 && (() => {
@@ -1340,26 +1420,55 @@ function AgentDetailView({ agentId }) {
           </div>
           {evals.length === 0 ? <div className="empty">No eval results yet.</div> : (
             <table>
-              <thead><tr><th>Version</th><th>Run At</th><th>Pass Rate</th><th>Avg Score</th><th>Cases</th><th>Threshold</th><th>Run By</th></tr></thead>
+              <thead><tr><th>Version</th><th>Run At</th><th>Pass Rate</th><th>Avg Score</th><th>Cases</th><th>Threshold</th><th>Dimensions</th><th>Run By</th></tr></thead>
               <tbody>
-                {evals.map(ev => (
-                  <tr key={ev.id}>
-                    <td><span className="tag">{ev.version}</span></td>
-                    <td style={{fontSize:12,color:"#888"}}>{fmtDate(ev.run_at)}</td>
-                    <td>
-                      <div>{(ev.pass_rate * 100).toFixed(0)}%</div>
-                      <div className="eval-bar-bg"><div className="eval-bar" style={{width: (ev.pass_rate*100)+"%"}} /></div>
-                    </td>
-                    <td>{ev.avg_score.toFixed(2)}</td>
-                    <td style={{fontSize:12}}>{ev.passed_cases}/{ev.total_cases}</td>
-                    <td>
-                      {ev.threshold_met
-                        ? <span className="decision-approved">✓ Met</span>
-                        : <span className="decision-rejected">✗ Not met</span>}
-                    </td>
-                    <td style={{fontSize:12,color:"#888"}}>{ev.run_by}</td>
-                  </tr>
-                ))}
+                {evals.map(ev => {
+                  const dims = (() => {
+                    try { return typeof ev.dimensions === "string" ? JSON.parse(ev.dimensions) : (ev.dimensions || {}); }
+                    catch { return {}; }
+                  })();
+                  const dimEntries = Object.entries(dims).filter(([,v]) => v != null);
+                  return (
+                    <tr key={ev.id}>
+                      <td><span className="tag">{ev.version}</span></td>
+                      <td style={{fontSize:12,color:"#888"}}>{fmtDate(ev.run_at)}</td>
+                      <td>
+                        <div>{(ev.pass_rate * 100).toFixed(0)}%</div>
+                        <div className="eval-bar-bg"><div className="eval-bar" style={{width: (ev.pass_rate*100)+"%"}} /></div>
+                      </td>
+                      <td>{ev.avg_score.toFixed(2)}</td>
+                      <td style={{fontSize:12}}>{ev.passed_cases}/{ev.total_cases}</td>
+                      <td>
+                        {ev.threshold_met
+                          ? <span className="decision-approved">✓ Met</span>
+                          : <span className="decision-rejected">✗ Not met</span>}
+                      </td>
+                      <td style={{minWidth:200}}>
+                        {dimEntries.length > 0 ? (
+                          <details>
+                            <summary style={{fontSize:11,cursor:"pointer",color:"#3b5bdb",fontWeight:600}}>
+                              {dimEntries.length} dimensions
+                            </summary>
+                            <div style={{marginTop:8}}>
+                              {dimEntries.map(([dim, score]) => {
+                                const pct = Math.min(100, (score / 10) * 100);
+                                const barClass = score < 6.5 ? "dim-bar-red" : score < 8 ? "dim-bar-amber" : "dim-bar-green";
+                                return (
+                                  <div key={dim} className="dim-row">
+                                    <div className="dim-label">{dim.replace(/_/g," ")}</div>
+                                    <div className="dim-bar-bg"><div className={barClass} style={{width:pct+"%"}} /></div>
+                                    <div className="dim-score" style={{color: score<6.5?"#e03131":score<8?"#f59f00":"#2f9e44"}}>{score.toFixed(1)}</div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </details>
+                        ) : <span style={{color:"#bbb",fontSize:11}}>—</span>}
+                      </td>
+                      <td style={{fontSize:12,color:"#888"}}>{ev.run_by}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
@@ -2654,7 +2763,7 @@ function App() {
       </nav>
       <div className="container">
         {view === "registry" && <RegistryView onSelectAgent={selectAgent} />}
-        {view === "detail" && selectedAgent && <AgentDetailView agentId={selectedAgent} />}
+        {view === "detail" && selectedAgent && <AgentDetailView agentId={selectedAgent} onSelectAgent={selectAgent} />}
         {view === "queue" && <GovernanceQueueView onSelectAgent={selectAgent} />}
       </div>
     </div>
