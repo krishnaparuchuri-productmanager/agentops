@@ -529,6 +529,8 @@ function AgentDetailView({ agentId }) {
   const [showTransition, setShowTransition] = React.useState(false);
   const [showEval, setShowEval] = React.useState(false);
   const [showRetire, setShowRetire] = React.useState(false);
+  const [showRequestApproval, setShowRequestApproval] = React.useState(false);
+  const [approvalReqForm, setApprovalReqForm] = React.useState({ to_stage:"", proposed_by:"Governance User", request_type:"promotion" });
   const [showEdit, setShowEdit] = React.useState(false);
   const [editStep, setEditStep] = React.useState(1);
   const [editForm, setEditForm] = React.useState({});
@@ -638,6 +640,24 @@ function AgentDetailView({ agentId }) {
     } catch (e) {
       setActionMsg({ type: "error", text: e.message });
     } finally { setSubmitting(false); }
+  }
+
+  async function submitApprovalRequest(e) {
+    e.preventDefault();
+    setSubmitting(true);
+    setActionMsg(null);
+    try {
+      await apiFetch(`/agents/${agentId}/approvals`, { method:"POST", body: JSON.stringify({
+        request_type: approvalReqForm.request_type,
+        from_stage: agent.current_stage,
+        to_stage: approvalReqForm.to_stage,
+        proposed_by: approvalReqForm.proposed_by,
+      })});
+      setActionMsg({ type:"success", text:`Approval request submitted for ${agent.current_stage} → ${approvalReqForm.to_stage}. Go to Governance Queue for a checker to approve it.` });
+      setShowRequestApproval(false);
+      load();
+    } catch(e) { setActionMsg({ type:"error", text: e.message }); }
+    finally { setSubmitting(false); }
   }
 
   function openEdit() {
@@ -1002,11 +1022,22 @@ function AgentDetailView({ agentId }) {
 
       {/* Tab: Approvals */}
       {tab === "approvals" && (
+        <div>
+          <div className="alert alert-info" style={{marginBottom:16}}>
+            <strong>How maker-checker works:</strong> You (maker) submit a request here → a Governance Lead (checker) approves it in the <strong>Governance Queue</strong> tab → then you can execute the transition via <strong>Move Stage</strong>.
+          </div>
         <div className="card">
-          <div className="card-title" style={{marginBottom:12}}>Approval Requests</div>
-          {approvals.length === 0 ? <div className="empty">No approval requests.</div> : (
+          <div className="card-header">
+            <div className="card-title">Approval Requests</div>
+            {agent.allowed_transitions?.length > 0 && (
+              <button className="btn btn-primary btn-sm" onClick={() => { setApprovalReqForm({ to_stage: agent.allowed_transitions[0], proposed_by:"Governance User", request_type:"promotion" }); setShowRequestApproval(true); }}>
+                + Request Approval
+              </button>
+            )}
+          </div>
+          {approvals.length === 0 ? <div className="empty">No approval requests yet. Submit one to unlock gated transitions.</div> : (
             <table>
-              <thead><tr><th>Type</th><th>Transition</th><th>Proposed By</th><th>Proposed At</th><th>Decision</th><th>Reviewed By</th></tr></thead>
+              <thead><tr><th>Type</th><th>Transition</th><th>Proposed By</th><th>Proposed At</th><th>Decision</th><th>Reviewed By</th><th>Action</th></tr></thead>
               <tbody>
                 {approvals.map(ap => (
                   <tr key={ap.id}>
@@ -1016,17 +1047,26 @@ function AgentDetailView({ agentId }) {
                     <td style={{fontSize:12,color:"#888"}}>{fmtDate(ap.proposed_at)}</td>
                     <td>
                       {!ap.decision
-                        ? <span className="decision-pending">Pending</span>
+                        ? <span className="decision-pending">⏳ Pending checker</span>
                         : ap.decision === "approved"
-                          ? <span className="decision-approved">Approved</span>
-                          : <span className="decision-rejected">Rejected</span>}
+                          ? <span className="decision-approved">✓ Approved</span>
+                          : <span className="decision-rejected">✗ Rejected</span>}
                     </td>
                     <td style={{fontSize:12,color:"#888"}}>{ap.reviewed_by || "—"}</td>
+                    <td>
+                      {!ap.decision && (
+                        <span style={{fontSize:11,color:"#888"}}>→ Governance Queue</span>
+                      )}
+                      {ap.decision === "approved" && (
+                        <span style={{fontSize:11,color:"#2f9e44"}}>✓ Use Move Stage</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
+        </div>
         </div>
       )}
 
@@ -1272,6 +1312,49 @@ function AgentDetailView({ agentId }) {
         </Modal>
       )}
 
+      {/* Modal: Request Approval */}
+      {showRequestApproval && (
+        <Modal title="Request Maker-Checker Approval" onClose={() => setShowRequestApproval(false)}>
+          <div className="alert alert-info" style={{fontSize:12,marginBottom:14}}>
+            Submit a request to unlock a gated stage transition. A <strong>Governance Lead</strong> (checker) will review and approve it in the <strong>Governance Queue</strong> tab. Once approved, use <strong>Move Stage</strong> to execute the transition.
+          </div>
+          <form onSubmit={submitApprovalRequest}>
+            <div className="form-group">
+              <label>Current Stage</label>
+              <input readOnly value={agent.current_stage} style={{background:"#f8f9fa",color:"#555",cursor:"default"}} />
+            </div>
+            <div className="form-group">
+              <label>Target Stage</label>
+              <select required value={approvalReqForm.to_stage}
+                onChange={e => setApprovalReqForm({...approvalReqForm, to_stage: e.target.value, request_type: e.target.value === "Retired" ? "retirement" : "promotion"})}>
+                <option value="">— select target stage —</option>
+                {(agent.allowed_transitions || []).map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Request Type</label>
+              <select value={approvalReqForm.request_type}
+                onChange={e => setApprovalReqForm({...approvalReqForm, request_type: e.target.value})}>
+                <option value="promotion">Promotion</option>
+                <option value="retirement">Retirement</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Proposed By (your name / role)</label>
+              <input required value={approvalReqForm.proposed_by}
+                onChange={e => setApprovalReqForm({...approvalReqForm, proposed_by: e.target.value})} />
+            </div>
+            {actionMsg && showRequestApproval && <div className={`alert alert-${actionMsg.type}`}>{actionMsg.text}</div>}
+            <div className="modal-actions">
+              <button type="button" className="btn btn-outline" onClick={() => setShowRequestApproval(false)}>Cancel</button>
+              <button type="submit" className="btn btn-primary" disabled={submitting || !approvalReqForm.to_stage}>
+                {submitting ? "Submitting…" : "Submit Request"}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
       {/* Modal: Move Stage */}
       {showTransition && (
         <Modal title="Move Lifecycle Stage" large={["Under Monitoring","Deprecated"].includes(transForm.to_stage)} onClose={() => setShowTransition(false)}>
@@ -1286,6 +1369,26 @@ function AgentDetailView({ agentId }) {
                 {(agent.allowed_transitions || []).map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
+            {/* Show approval status when a gated transition is selected */}
+            {transForm.to_stage && (() => {
+              const approved = approvals.find(a => a.to_stage === transForm.to_stage && a.decision === "approved");
+              const pending  = approvals.find(a => a.to_stage === transForm.to_stage && !a.decision);
+              if (approved) return (
+                <div className="alert alert-success" style={{fontSize:12}}>
+                  ✓ Approved maker-checker request found — you can proceed with this transition.
+                </div>
+              );
+              if (pending) return (
+                <div className="alert alert-warn" style={{fontSize:12}}>
+                  ⏳ An approval request is pending in the <strong>Governance Queue</strong>. A checker must approve it before you can move stage.
+                </div>
+              );
+              return (
+                <div className="alert alert-info" style={{fontSize:12}}>
+                  ℹ️ This transition may require an approved maker-checker request. If it fails, go to the <strong>Approvals tab</strong> and submit a request first.
+                </div>
+              );
+            })()}
             <div className="form-group">
               <label>Triggered By</label>
               <input value={transForm.triggered_by} onChange={e => setTransForm({...transForm, triggered_by: e.target.value})} />
