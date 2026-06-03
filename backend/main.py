@@ -646,6 +646,21 @@ def agent_audit(agent_id: str, limit: int = Query(50, ge=1, le=500)):
     return result
 
 
+@app.delete("/agents/{agent_id}", status_code=200)
+def delete_agent(agent_id: str):
+    """
+    Hard-delete an agent and all its related data.
+    Use only to remove stale / incorrectly-registered agents.
+    """
+    with db() as conn:
+        _ensure_agent(conn, agent_id)
+        for table in ["audit_log", "approval_requests", "cost_records",
+                      "eval_results", "lifecycle_transitions", "agent_versions"]:
+            conn.execute(f"DELETE FROM {table} WHERE agent_id=?", (agent_id,))
+        conn.execute("DELETE FROM agents WHERE id=?", (agent_id,))
+    return {"deleted": agent_id}
+
+
 @app.get("/audit")
 def global_audit(limit: int = Query(100, ge=1, le=1000)):
     with db() as conn:
