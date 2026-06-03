@@ -290,7 +290,7 @@ function RegistryView({ onSelectAgent }) {
   const [error, setError] = React.useState(null);
   const [showRegister, setShowRegister] = React.useState(false);
   const [step, setStep] = React.useState(1);
-  const defaultForm = { id:"", name:"", owner:"", description:"", product:"", workflow:"", domain:"", environment:"production", production_critical:false, pii_access:false, regulated_domain:false, escalates_to_human:false, eval_threshold:0.80, model:"", guardrails:[], golden_rules:[], max_tokens_per_call:"", max_cost_per_session:"", max_cost_per_day:"", monthly_budget:"", alert_threshold_pct:80 };
+  const defaultForm = { id:"", name:"", owner:"", description:"", product:"", workflow:"", domain:"", environment:"staging", production_critical:false, pii_access:false, regulated_domain:false, escalates_to_human:false, eval_threshold:0.80, model:"", guardrails:[], golden_rules:[], max_tokens_per_call:"", max_cost_per_session:"", max_cost_per_day:"", monthly_budget:"", alert_threshold_pct:80 };
   const [form, setForm] = React.useState(defaultForm);
   const [submitting, setSubmitting] = React.useState(false);
   const [msg, setMsg] = React.useState(null);
@@ -461,10 +461,10 @@ function RegistryView({ onSelectAgent }) {
                 <div className="form-group">
                   <label>Environment</label>
                   <select value={form.environment} onChange={e => setForm({...form, environment: e.target.value})}>
-                    <option value="production">Production</option>
                     <option value="staging">Staging</option>
                     <option value="development">Development</option>
                   </select>
+                  <div style={{fontSize:11,color:"#888",marginTop:4}}>New agents must start in Staging. Promotion to Production requires an approved maker-checker request.</div>
                 </div>
               </div>
               <div className="section-label">Risk & Classification</div>
