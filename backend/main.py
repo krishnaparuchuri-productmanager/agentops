@@ -736,6 +736,99 @@ def ingest_trace(agent_id: str, body: TraceCreate):
     return {"trace_id": body.trace_id, "status": "accepted"}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  Alerts — policy violations, threshold breaches, golden rule failures
+# ─────────────────────────────────────────────────────────────────────────────
+
+class AlertCreate(BaseModel):
+    alert_type:   str   # 'cost_threshold' | 'golden_rule_violation' | 'escalation_spike' | 'eval_degradation'
+    severity:     str   # 'critical' | 'warning' | 'info'
+    title:        str
+    message:      str
+    triggered_at: Optional[str] = None   # ISO-8601; defaults to now
+    metadata:     dict = Field(default_factory=dict)
+
+
+@app.get("/agents/{agent_id}/alerts")
+def list_alerts(
+    agent_id:      str,
+    active_only:   bool = Query(True),
+    limit:         int  = Query(50, ge=1, le=200),
+):
+    """Return alerts for an agent. active_only=true (default) returns unresolved alerts only."""
+    with db() as conn:
+        _ensure_agent(conn, agent_id)
+        if active_only:
+            rows = conn.execute(
+                """SELECT * FROM agent_alerts
+                   WHERE agent_id=? AND resolved_at IS NULL
+                   ORDER BY
+                     CASE severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,
+                     triggered_at DESC
+                   LIMIT ?""",
+                (agent_id, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT * FROM agent_alerts WHERE agent_id=?
+                   ORDER BY triggered_at DESC LIMIT ?""",
+                (agent_id, limit),
+            ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["metadata"] = json.loads(d["metadata"])
+        except (json.JSONDecodeError, TypeError):
+            d["metadata"] = {}
+        result.append(d)
+    return result
+
+
+@app.post("/agents/{agent_id}/alerts", status_code=201)
+def create_alert(agent_id: str, body: AlertCreate):
+    """Create a new alert for an agent (called by monitoring systems or seeding)."""
+    with db() as conn:
+        _ensure_agent(conn, agent_id)
+        triggered_at = body.triggered_at or _now()
+        cursor = conn.execute(
+            """INSERT INTO agent_alerts
+               (agent_id, alert_type, severity, title, message, triggered_at, metadata)
+               VALUES (?,?,?,?,?,?,?)""",
+            (agent_id, body.alert_type, body.severity, body.title,
+             body.message, triggered_at, json.dumps(body.metadata)),
+        )
+        alert_id = cursor.lastrowid
+        _audit(conn, agent_id, "system", "ALERT_TRIGGERED", {
+            "alert_id": alert_id,
+            "type": body.alert_type,
+            "severity": body.severity,
+            "title": body.title,
+        })
+    return {"alert_id": alert_id, "status": "active"}
+
+
+@app.post("/agents/{agent_id}/alerts/{alert_id}/resolve")
+def resolve_alert(agent_id: str, alert_id: int, resolved_by: str = "Governance User"):
+    """Mark an alert as resolved."""
+    with db() as conn:
+        _ensure_agent(conn, agent_id)
+        alert = conn.execute(
+            "SELECT * FROM agent_alerts WHERE id=? AND agent_id=?", (alert_id, agent_id)
+        ).fetchone()
+        if not alert:
+            raise HTTPException(404, "Alert not found")
+        if alert["resolved_at"]:
+            raise HTTPException(409, "Alert already resolved")
+        now = _now()
+        conn.execute(
+            "UPDATE agent_alerts SET resolved_at=?, resolved_by=? WHERE id=?",
+            (now, resolved_by, alert_id),
+        )
+        _audit(conn, agent_id, resolved_by, "ALERT_RESOLVED", {"alert_id": alert_id})
+    return {"alert_id": alert_id, "status": "resolved"}
+
+
 @app.get("/agents/{agent_id}/traces")
 def list_traces(
     agent_id: str,

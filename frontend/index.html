@@ -582,6 +582,7 @@ function AgentDetailView({ agentId }) {
   const [approvals, setApprovals] = React.useState([]);
   const [traces, setTraces] = React.useState({ total: 0, traces: [] });
   const [expandedTrace, setExpandedTrace] = React.useState(null);
+  const [alerts, setAlerts] = React.useState([]);
   const [error, setError] = React.useState(null);
   const [tab, setTab] = React.useState("overview");
 
@@ -611,7 +612,7 @@ function AgentDetailView({ agentId }) {
 
   async function load() {
     try {
-      const [a, vs, ev, cs, al, ap, tr] = await Promise.all([
+      const [a, vs, ev, cs, al, ap, tr, alrt] = await Promise.all([
         apiFetch(`/agents/${agentId}`),
         apiFetch(`/agents/${agentId}/versions`),
         apiFetch(`/agents/${agentId}/evals`),
@@ -619,6 +620,7 @@ function AgentDetailView({ agentId }) {
         apiFetch(`/agents/${agentId}/audit`),
         apiFetch(`/agents/${agentId}/approvals`),
         apiFetch(`/agents/${agentId}/traces?limit=100`),
+        apiFetch(`/agents/${agentId}/alerts?active_only=false&limit=20`),
       ]);
       setAgent(a);
       setVersions(vs);
@@ -627,6 +629,7 @@ function AgentDetailView({ agentId }) {
       setAuditLog(al);
       setApprovals(ap);
       setTraces(tr);
+      setAlerts(alrt);
     } catch (e) {
       setError(e.message);
     }
@@ -855,6 +858,10 @@ function AgentDetailView({ agentId }) {
               color: tab===t ? "#3b5bdb" : "#888", fontWeight: tab===t ? 600 : 400,
               fontSize:13, marginBottom:"-2px"}}>
             {t.charAt(0).toUpperCase() + t.slice(1)}
+            {t==="overview" && alerts.filter(a=>!a.resolved_at).length > 0 &&
+              <span style={{background:"#e03131",color:"#fff",borderRadius:8,padding:"1px 6px",fontSize:10,marginLeft:6}}>
+                {alerts.filter(a=>!a.resolved_at).length}
+              </span>}
             {t==="approvals" && approvals.filter(a=>!a.decision).length > 0 &&
               <span style={{background:"#e03131",color:"#fff",borderRadius:8,padding:"1px 6px",fontSize:10,marginLeft:6}}>
                 {approvals.filter(a=>!a.decision).length}
@@ -870,6 +877,76 @@ function AgentDetailView({ agentId }) {
       {/* Tab: Overview */}
       {tab === "overview" && (
         <div>
+
+          {/* ── Active Alerts ────────────────────────────────────────── */}
+          {alerts.length > 0 && (() => {
+            const active   = alerts.filter(a => !a.resolved_at);
+            const resolved = alerts.filter(a =>  a.resolved_at);
+            const sevIcon  = { critical:"🔴", warning:"🟡", info:"🔵" };
+            const sevBg    = { critical:"#fff5f5", warning:"#fffbeb", info:"#eff6ff" };
+            const sevBorder= { critical:"#fca5a5", warning:"#fde68a", info:"#bfdbfe" };
+            const sevColor = { critical:"#991b1b", warning:"#92400e", info:"#1e40af" };
+            return (
+              <div className="card" style={{marginBottom:16, borderLeft:"4px solid #e03131"}}>
+                <div className="card-header" style={{marginBottom: active.length ? 12 : 0}}>
+                  <div className="card-title">
+                    🚨 Active Alerts
+                    {active.length > 0 && <span style={{marginLeft:8,background:"#e03131",color:"#fff",borderRadius:8,padding:"2px 8px",fontSize:11}}>{active.length} active</span>}
+                    {resolved.length > 0 && <span style={{marginLeft:6,background:"#e5e7eb",color:"#6b7280",borderRadius:8,padding:"2px 8px",fontSize:11}}>{resolved.length} resolved</span>}
+                  </div>
+                </div>
+                {active.length === 0 && <div style={{fontSize:12,color:"#888",paddingBottom:4}}>No active alerts — all clear ✓</div>}
+                <div style={{display:"flex", flexDirection:"column", gap:10}}>
+                  {alerts.map(alert => {
+                    const isResolved = !!alert.resolved_at;
+                    const bg     = isResolved ? "#f9fafb" : (sevBg[alert.severity]     || "#fff");
+                    const border = isResolved ? "#e5e7eb" : (sevBorder[alert.severity] || "#ddd");
+                    const color  = isResolved ? "#9ca3af" : (sevColor[alert.severity]  || "#333");
+                    return (
+                      <div key={alert.id} style={{
+                        background: bg, border:`1px solid ${border}`,
+                        borderRadius:8, padding:"10px 14px",
+                        opacity: isResolved ? 0.65 : 1,
+                      }}>
+                        <div style={{display:"flex", alignItems:"flex-start", gap:10}}>
+                          <span style={{fontSize:16, flexShrink:0}}>{isResolved ? "✅" : (sevIcon[alert.severity] || "⚪")}</span>
+                          <div style={{flex:1}}>
+                            <div style={{display:"flex", alignItems:"center", gap:8, flexWrap:"wrap"}}>
+                              <span style={{fontWeight:700, fontSize:13, color}}>{alert.title}</span>
+                              <span style={{fontSize:10, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.5px",
+                                background: isResolved ? "#e5e7eb" : border, color, borderRadius:4, padding:"1px 6px"}}>
+                                {isResolved ? "resolved" : alert.severity}
+                              </span>
+                              <span style={{fontSize:10, color:"#9ca3af", background:"#f3f4f6", borderRadius:4, padding:"1px 6px"}}>
+                                {alert.alert_type.replace(/_/g," ")}
+                              </span>
+                              <span style={{marginLeft:"auto", fontSize:11, color:"#9ca3af"}}>{fmtDate(alert.triggered_at)}</span>
+                            </div>
+                            <div style={{fontSize:12, color: isResolved ? "#9ca3af" : "#555", marginTop:4, lineHeight:1.5}}>{alert.message}</div>
+                            {alert.metadata && Object.keys(alert.metadata).length > 0 && (
+                              <div style={{marginTop:6, display:"flex", gap:12, flexWrap:"wrap"}}>
+                                {Object.entries(alert.metadata).map(([k,v]) => (
+                                  <span key={k} style={{fontSize:11, color:"#6b7280"}}>
+                                    <strong>{k.replace(/_/g," ")}:</strong> {String(v)}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                            {isResolved && (
+                              <div style={{fontSize:11, color:"#9ca3af", marginTop:4}}>
+                                Resolved by {alert.resolved_by} · {fmtDate(alert.resolved_at)}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
           <div className="grid-2" style={{marginBottom:0}}>
             {/* Identity card */}
             <div className="card">

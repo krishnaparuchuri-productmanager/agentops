@@ -165,6 +165,24 @@ CREATE TABLE IF NOT EXISTS agent_traces (
     received_at     TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- ─────────────────────────────────────────────
+--  Agent alerts — policy violations, threshold breaches, rule failures
+-- ─────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS agent_alerts (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id     TEXT NOT NULL REFERENCES agents(id),
+    alert_type   TEXT NOT NULL,   -- 'cost_threshold' | 'golden_rule_violation' | 'escalation_spike' | 'eval_degradation'
+    severity     TEXT NOT NULL,   -- 'critical' | 'warning' | 'info'
+    title        TEXT NOT NULL,
+    message      TEXT NOT NULL,
+    triggered_at TEXT NOT NULL DEFAULT (datetime('now')),
+    resolved_at  TEXT,            -- NULL = still active
+    resolved_by  TEXT,
+    metadata     TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_alerts_agent ON agent_alerts(agent_id, resolved_at);
+
 -- Indexes for common query patterns
 CREATE INDEX IF NOT EXISTS idx_audit_agent ON audit_log(agent_id);
 CREATE INDEX IF NOT EXISTS idx_audit_time  ON audit_log(event_time);
@@ -192,9 +210,27 @@ def migrate_db():
         if "notes" not in approval_cols:
             conn.execute("ALTER TABLE approval_requests ADD COLUMN notes TEXT")
 
+        tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+
+        if "agent_alerts" not in tables:
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS agent_alerts (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_id     TEXT NOT NULL,
+                    alert_type   TEXT NOT NULL,
+                    severity     TEXT NOT NULL,
+                    title        TEXT NOT NULL,
+                    message      TEXT NOT NULL,
+                    triggered_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    resolved_at  TEXT,
+                    resolved_by  TEXT,
+                    metadata     TEXT NOT NULL DEFAULT '{}'
+                );
+                CREATE INDEX IF NOT EXISTS idx_alerts_agent ON agent_alerts(agent_id, resolved_at);
+            """)
+
         # agent_traces table — created by init_db() if schema is fresh; add via DDL for
         # existing deployments that don't have it yet.
-        tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
         if "agent_traces" not in tables:
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS agent_traces (
