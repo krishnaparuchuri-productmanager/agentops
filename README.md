@@ -31,6 +31,9 @@ Built as a learning-by-doing exercise in regulated-domain AI governance. The goa
 ### Governance Queue — Approval workflow & active alerts
 ![Governance Queue](docs/screenshots/07-governance-queue.png)
 
+### Register New Agent — 3-step form (Identity → Context & Classification → Config)
+![Register Agent](docs/screenshots/08-register-agent.png)
+
 ---
 
 ## What It Does
