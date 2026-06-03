@@ -153,13 +153,19 @@ const API = (typeof window !== "undefined" && window.AGENTOPS_API) || "http://lo
 // ── Utils ──────────────────────────────────────────────────────────────────
 
 async function apiFetch(path, options = {}) {
-  const res = await fetch(API + path, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
+  let res;
+  try {
+    res = await fetch(API + path, {
+      headers: { "Content-Type": "application/json" },
+      ...options,
+    });
+  } catch (networkErr) {
+    // fetch() itself rejected — network failure or CORS preflight error
+    throw new Error(`Network error: ${networkErr.message || "Could not reach the server"}`);
+  }
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Request failed");
+    const err = await res.json().catch(() => ({ detail: res.statusText || "Request failed" }));
+    throw new Error(err.detail || `HTTP ${res.status}`);
   }
   return res.json();
 }
@@ -311,13 +317,16 @@ function RegistryView({ onSelectAgent }) {
     setSubmitting(true);
     setMsg(null);
     try {
-      const budget_config = {
+      const _budgetLimits = {
         ...(form.max_tokens_per_call  ? { max_tokens_per_call:  parseInt(form.max_tokens_per_call) }  : {}),
         ...(form.max_cost_per_session ? { max_cost_per_session: parseFloat(form.max_cost_per_session) } : {}),
         ...(form.max_cost_per_day     ? { max_cost_per_day:     parseFloat(form.max_cost_per_day) }     : {}),
         ...(form.monthly_budget       ? { monthly_budget:       parseFloat(form.monthly_budget) }       : {}),
-        alert_threshold_pct: form.alert_threshold_pct || 80,
       };
+      // Only include alert_threshold_pct (and show the budget card) when at least one limit is set.
+      const budget_config = Object.keys(_budgetLimits).length > 0
+        ? { ..._budgetLimits, alert_threshold_pct: form.alert_threshold_pct || 80 }
+        : {};
       const classification = { production_critical: form.production_critical, pii_access: form.pii_access, regulated_domain: form.regulated_domain, escalates_to_human: form.escalates_to_human, product: form.product, workflow: form.workflow, domain: form.domain, environment: form.environment, eval_threshold: parseFloat(form.eval_threshold), model: form.model, guardrails: form.guardrails, golden_rules: form.golden_rules, budget_config };
       await apiFetch("/agents", { method: "POST", body: JSON.stringify({ id: form.id, name: form.name, owner: form.owner, description: form.description, classification, actor: "Governance User" }) });
       setMsg({ type: "success", text: `Agent '${form.name}' registered.` });
@@ -571,6 +580,8 @@ function AgentDetailView({ agentId }) {
   const [costs, setCosts] = React.useState(null);
   const [auditLog, setAuditLog] = React.useState([]);
   const [approvals, setApprovals] = React.useState([]);
+  const [traces, setTraces] = React.useState({ total: 0, traces: [] });
+  const [expandedTrace, setExpandedTrace] = React.useState(null);
   const [error, setError] = React.useState(null);
   const [tab, setTab] = React.useState("overview");
 
@@ -600,13 +611,14 @@ function AgentDetailView({ agentId }) {
 
   async function load() {
     try {
-      const [a, vs, ev, cs, al, ap] = await Promise.all([
+      const [a, vs, ev, cs, al, ap, tr] = await Promise.all([
         apiFetch(`/agents/${agentId}`),
         apiFetch(`/agents/${agentId}/versions`),
         apiFetch(`/agents/${agentId}/evals`),
         apiFetch(`/agents/${agentId}/costs`),
         apiFetch(`/agents/${agentId}/audit`),
         apiFetch(`/agents/${agentId}/approvals`),
+        apiFetch(`/agents/${agentId}/traces?limit=100`),
       ]);
       setAgent(a);
       setVersions(vs);
@@ -614,6 +626,7 @@ function AgentDetailView({ agentId }) {
       setCosts(cs);
       setAuditLog(al);
       setApprovals(ap);
+      setTraces(tr);
     } catch (e) {
       setError(e.message);
     }
@@ -835,7 +848,7 @@ function AgentDetailView({ agentId }) {
 
       {/* Tabs */}
       <div style={{display:"flex", gap:2, marginBottom:16, borderBottom:"2px solid #eee"}}>
-        {["overview","versions","evals","costs","approvals","audit"].map(t => (
+        {["overview","versions","evals","costs","traces","approvals","audit"].map(t => (
           <button key={t} onClick={() => setTab(t)}
             style={{padding:"8px 16px", background:"none", border:"none", cursor:"pointer",
               borderBottom: tab===t ? "2px solid #3b5bdb" : "2px solid transparent",
@@ -845,6 +858,10 @@ function AgentDetailView({ agentId }) {
             {t==="approvals" && approvals.filter(a=>!a.decision).length > 0 &&
               <span style={{background:"#e03131",color:"#fff",borderRadius:8,padding:"1px 6px",fontSize:10,marginLeft:6}}>
                 {approvals.filter(a=>!a.decision).length}
+              </span>}
+            {t==="traces" && traces.total > 0 &&
+              <span style={{background:"#3b5bdb",color:"#fff",borderRadius:8,padding:"1px 6px",fontSize:10,marginLeft:6}}>
+                {traces.total}
               </span>}
           </button>
         ))}
@@ -1112,6 +1129,182 @@ function AgentDetailView({ agentId }) {
                   ))}
                 </tbody>
               </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Tab: Traces */}
+      {tab === "traces" && (
+        <div>
+          {/* Summary stats row */}
+          {traces.traces.length > 0 && (() => {
+            const all = traces.traces;
+            const escalated = all.filter(t => t.qa_escalation).length;
+            const fallbacks = all.filter(t => t.is_fallback).length;
+            const avgLatency = Math.round(all.reduce((s, t) => s + (t.latency_ms || 0), 0) / all.length);
+            const totalCost  = all.reduce((s, t) => s + (t.cost_usd || 0), 0);
+            const severityCounts = all.reduce((acc, t) => {
+              const s = t.severity || "Unknown";
+              acc[s] = (acc[s] || 0) + 1;
+              return acc;
+            }, {});
+            return (
+              <div className="grid-3" style={{marginBottom:16}}>
+                <div className="stat-box">
+                  <div className="stat-label">Total Traces (shown)</div>
+                  <div className="stat-value">{traces.total.toLocaleString()}</div>
+                  <div className="stat-sub">Showing last {all.length}</div>
+                </div>
+                <div className="stat-box">
+                  <div className="stat-label">Escalation Rate</div>
+                  <div className="stat-value" style={{color: escalated/all.length > 0.3 ? "#e03131" : "#2f9e44"}}>
+                    {Math.round(escalated / all.length * 100)}%
+                  </div>
+                  <div className="stat-sub">{escalated} of {all.length} escalated to QA</div>
+                </div>
+                <div className="stat-box">
+                  <div className="stat-label">Avg Latency</div>
+                  <div className="stat-value">{avgLatency.toLocaleString()}ms</div>
+                  <div className="stat-sub">Cost: {fmtCost(totalCost)} total · {fallbacks} fallbacks</div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Severity breakdown */}
+          {traces.traces.length > 0 && (() => {
+            const counts = traces.traces.reduce((acc, t) => {
+              const s = t.severity || "Unknown";
+              acc[s] = (acc[s] || 0) + 1;
+              return acc;
+            }, {});
+            const colors = { Critical: "#e03131", Major: "#e67700", Minor: "#2f9e44", Unknown: "#aaa" };
+            return (
+              <div className="card" style={{marginBottom:16}}>
+                <div className="card-title" style={{marginBottom:12}}>Severity Distribution</div>
+                <div style={{display:"flex", gap:20, flexWrap:"wrap"}}>
+                  {Object.entries(counts).sort(([,a],[,b]) => b-a).map(([sev, cnt]) => (
+                    <div key={sev} style={{textAlign:"center"}}>
+                      <div style={{fontSize:22, fontWeight:700, color: colors[sev] || "#888"}}>{cnt}</div>
+                      <div style={{fontSize:11, color:"#888", marginTop:2}}>{sev}</div>
+                      <div style={{fontSize:10, color:"#bbb"}}>{Math.round(cnt/traces.traces.length*100)}%</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Trace table */}
+          <div className="card">
+            <div className="card-header">
+              <div className="card-title">Execution Traces</div>
+              <div style={{fontSize:12,color:"#888"}}>Click any row to see full input &amp; output</div>
+            </div>
+            {traces.traces.length === 0
+              ? (
+                <div className="empty">
+                  <div style={{fontSize:32, marginBottom:8}}>📭</div>
+                  <div>No execution traces yet.</div>
+                  <div style={{fontSize:12, color:"#aaa", marginTop:6}}>
+                    Traces appear here automatically after each GMP deviation review is submitted.
+                    Make sure <code>AGENTOPS_API_URL</code> is set in the GMP app's environment.
+                  </div>
+                </div>
+              ) : (
+              <div>
+                <table style={{tableLayout:"fixed", width:"100%"}}>
+                  <colgroup>
+                    <col style={{width:130}} />
+                    <col style={{width:75}} />
+                    <col style={{width:80}} />
+                    <col style={{width:75}} />
+                    <col style={{width:70}} />
+                    <col style={{width:80}} />
+                    <col />
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Severity</th>
+                      <th>Escalated</th>
+                      <th>Latency</th>
+                      <th>Tokens</th>
+                      <th>Cost</th>
+                      <th>Input Excerpt</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {traces.traces.map(tr => {
+                      const isExpanded = expandedTrace === tr.id;
+                      const sevColor = { Critical:"#e03131", Major:"#e67700", Minor:"#2f9e44" }[tr.severity] || "#aaa";
+                      const totalTok = (tr.input_tokens || 0) + (tr.output_tokens || 0);
+                      return (
+                        <React.Fragment key={tr.id}>
+                          <tr
+                            onClick={() => setExpandedTrace(isExpanded ? null : tr.id)}
+                            style={{cursor:"pointer", background: isExpanded ? "#f0f4ff" : undefined}}
+                          >
+                            <td style={{fontSize:11, color:"#888", whiteSpace:"nowrap", verticalAlign:"top", paddingTop:10}}>
+                              {fmtDate(tr.timestamp)}
+                            </td>
+                            <td style={{verticalAlign:"top", paddingTop:8}}>
+                              {tr.severity
+                                ? <span style={{fontSize:11,fontWeight:700,color:sevColor,background:sevColor+"22",padding:"2px 6px",borderRadius:4}}>{tr.severity}</span>
+                                : <span style={{fontSize:11,color:"#ccc"}}>—</span>}
+                            </td>
+                            <td style={{verticalAlign:"top", paddingTop:10}}>
+                              {tr.qa_escalation
+                                ? <span style={{fontSize:11,fontWeight:700,color:"#e03131"}}>🚨 Yes</span>
+                                : <span style={{fontSize:11,color:"#2f9e44"}}>No</span>}
+                            </td>
+                            <td style={{fontSize:12, verticalAlign:"top", paddingTop:10}}>{tr.latency_ms ? tr.latency_ms.toLocaleString()+"ms" : "—"}</td>
+                            <td style={{fontSize:11, color:"#888", verticalAlign:"top", paddingTop:10}}>{totalTok ? totalTok.toLocaleString() : "—"}</td>
+                            <td style={{fontSize:12, verticalAlign:"top", paddingTop:10}}>{tr.cost_usd ? fmtCost(tr.cost_usd) : "—"}</td>
+                            <td style={{fontSize:12, color:"#555", verticalAlign:"top", paddingTop:10, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+                              {tr.is_fallback
+                                ? <span style={{fontSize:11,background:"#fff3cd",color:"#856404",borderRadius:4,padding:"2px 6px",marginRight:6}}>⚠ fallback</span>
+                                : null}
+                              {(tr.user_input || "").slice(0, 80) || <span style={{color:"#ccc"}}>—</span>}
+                            </td>
+                          </tr>
+                          {/* Expanded detail row */}
+                          {isExpanded && (
+                            <tr>
+                              <td colSpan={7} style={{background:"#f8f9ff", padding:"14px 16px", borderBottom:"2px solid #d0d8ff"}}>
+                                <div className="grid-2" style={{gap:16}}>
+                                  <div>
+                                    <div style={{fontSize:11,fontWeight:700,color:"#888",textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:6}}>Full Input</div>
+                                    <pre style={{margin:0,fontSize:12,lineHeight:1.6,background:"#fff",border:"1px solid #dde",borderRadius:6,padding:"8px 12px",whiteSpace:"pre-wrap",wordBreak:"break-word",maxHeight:200,overflowY:"auto",color:"#333"}}>{tr.user_input || "—"}</pre>
+                                  </div>
+                                  <div>
+                                    <div style={{fontSize:11,fontWeight:700,color:"#888",textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:6}}>Assessment Output</div>
+                                    {tr.model_output
+                                      ? <pre style={{margin:0,fontSize:11,lineHeight:1.5,background:"#fff",border:"1px solid #dde",borderRadius:6,padding:"8px 12px",whiteSpace:"pre-wrap",wordBreak:"break-word",maxHeight:200,overflowY:"auto",color:"#333",fontFamily:"'SF Mono','Fira Code',monospace"}}>{typeof tr.model_output === "string" ? tr.model_output : JSON.stringify(tr.model_output, null, 2)}</pre>
+                                      : <div style={{fontSize:12,color:"#aaa",padding:"8px 0"}}>Output not captured (model_output not pushed)</div>}
+                                  </div>
+                                </div>
+                                <div style={{marginTop:10, display:"flex", gap:16, fontSize:11, color:"#888"}}>
+                                  <span>trace_id: <code style={{fontSize:10}}>{tr.trace_id}</code></span>
+                                  <span>source: <code style={{fontSize:10}}>{tr.source_app || "unknown"}</code></span>
+                                  <span>input: {tr.input_tokens?.toLocaleString()} tok · output: {tr.output_tokens?.toLocaleString()} tok</span>
+                                  {tr.classification && <span>class: <strong>{tr.classification}</strong></span>}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                {traces.total > traces.traces.length && (
+                  <div style={{textAlign:"center", padding:"12px 0", fontSize:12, color:"#888", borderTop:"1px solid #f0f0f0"}}>
+                    Showing {traces.traces.length} of {traces.total.toLocaleString()} traces. Use the API (<code>/agents/{agentId}/traces?limit=500</code>) for full export.
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>

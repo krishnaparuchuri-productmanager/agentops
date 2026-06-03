@@ -1,6 +1,11 @@
 """
 AgentOps — Database layer (SQLite, stdlib only, no ORM)
 All writes to audit_log are INSERT-only. No UPDATE or DELETE ever touches that table.
+
+Security notes:
+  - audit_log is INSERT-only; no endpoint issues UPDATE/DELETE on it.
+  - agent_id path params are always validated via _ensure_agent() before use.
+  - Column names in UPDATE statements are built from a fixed dict keyset, not user input.
 """
 
 import sqlite3
@@ -137,11 +142,35 @@ CREATE TABLE IF NOT EXISTS audit_log (
     payload         TEXT NOT NULL DEFAULT '{}' -- JSON with full before/after context
 );
 
+-- ─────────────────────────────────────────────
+--  Execution traces — per-call record pushed from agent apps
+--  (e.g. GMP Deviation Review pushes one row per /api/review call)
+-- ─────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS agent_traces (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id        TEXT NOT NULL REFERENCES agents(id),
+    trace_id        TEXT NOT NULL UNIQUE,              -- UUID from the source app
+    timestamp       TEXT NOT NULL,                     -- ISO-8601 UTC
+    user_input      TEXT,                              -- sanitised excerpt (first 500 chars)
+    severity        TEXT,                              -- Critical | Major | Minor | null
+    qa_escalation   INTEGER DEFAULT 0,                 -- 1 = escalated
+    classification  TEXT,                              -- deviation classification label
+    input_tokens    INTEGER DEFAULT 0,
+    output_tokens   INTEGER DEFAULT 0,
+    cost_usd        REAL DEFAULT 0.0,
+    latency_ms      INTEGER DEFAULT 0,
+    is_fallback     INTEGER DEFAULT 0,                 -- 1 = LLM returned safe fallback
+    model_output    TEXT,                              -- JSON string of full LLM response
+    source_app      TEXT,                              -- e.g. "sop-deviation-review"
+    received_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Indexes for common query patterns
 CREATE INDEX IF NOT EXISTS idx_audit_agent ON audit_log(agent_id);
 CREATE INDEX IF NOT EXISTS idx_audit_time  ON audit_log(event_time);
 CREATE INDEX IF NOT EXISTS idx_approval_agent ON approval_requests(agent_id);
 CREATE INDEX IF NOT EXISTS idx_cost_agent_date ON cost_records(agent_id, recorded_date);
+CREATE INDEX IF NOT EXISTS idx_traces_agent ON agent_traces(agent_id, timestamp);
 """
 
 
@@ -151,7 +180,7 @@ def init_db():
 
 
 def migrate_db():
-    """Safely add new columns to existing tables without dropping data."""
+    """Safely add new columns / tables to existing DB without dropping data."""
     with db() as conn:
         existing_cols = [r[1] for r in conn.execute("PRAGMA table_info(agent_versions)").fetchall()]
         if "status" not in existing_cols:
@@ -162,3 +191,29 @@ def migrate_db():
         approval_cols = [r[1] for r in conn.execute("PRAGMA table_info(approval_requests)").fetchall()]
         if "notes" not in approval_cols:
             conn.execute("ALTER TABLE approval_requests ADD COLUMN notes TEXT")
+
+        # agent_traces table — created by init_db() if schema is fresh; add via DDL for
+        # existing deployments that don't have it yet.
+        tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+        if "agent_traces" not in tables:
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS agent_traces (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_id        TEXT NOT NULL,
+                    trace_id        TEXT NOT NULL UNIQUE,
+                    timestamp       TEXT NOT NULL,
+                    user_input      TEXT,
+                    severity        TEXT,
+                    qa_escalation   INTEGER DEFAULT 0,
+                    classification  TEXT,
+                    input_tokens    INTEGER DEFAULT 0,
+                    output_tokens   INTEGER DEFAULT 0,
+                    cost_usd        REAL DEFAULT 0.0,
+                    latency_ms      INTEGER DEFAULT 0,
+                    is_fallback     INTEGER DEFAULT 0,
+                    model_output    TEXT,
+                    source_app      TEXT,
+                    received_at     TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_traces_agent ON agent_traces(agent_id, timestamp);
+            """)

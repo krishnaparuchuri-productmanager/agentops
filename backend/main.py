@@ -26,7 +26,7 @@ Endpoints:
 import json
 import os
 import uuid
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query
@@ -66,7 +66,8 @@ def startup():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _now() -> str:
-    return datetime.utcnow().isoformat(timespec="seconds")
+    # datetime.utcnow() is deprecated in Python 3.12+; use timezone-aware variant.
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "")
 
 
 def _audit(conn, agent_id: Optional[str], actor: str, action: str, payload: dict):
@@ -399,13 +400,18 @@ def propose_approval(agent_id: str, body: ApprovalCreate):
     with db() as conn:
         agent = _ensure_agent(conn, agent_id)
         # Validate the transition is conceptually valid before even creating the request
-        try:
-            validate_transition(agent["current_stage"], body.to_stage,
-                                has_approved_request=False, has_passing_eval=False)
-        except TransitionError as e:
-            # Only block if transition is outright invalid (not just missing approval)
-            if "not a valid transition" in str(e):
-                raise HTTPException(422, str(e))
+        # Guard: check the transition rule exists at all.
+        # We call get_transition() directly so we don't accidentally reject
+        # valid-but-gated transitions (which need approval, not a 422).
+        from lifecycle import get_transition as _get_t
+        if _get_t(agent["current_stage"], body.to_stage) is None:
+            from lifecycle import allowed_next_stages as _ans
+            valid = _ans(agent["current_stage"])
+            raise HTTPException(
+                422,
+                f"'{agent['current_stage']}' → '{body.to_stage}' is not a valid transition. "
+                f"Valid next stages: {valid or ['none (terminal state)']}",
+            )
 
         # Block duplicate pending requests for same transition
         dup = conn.execute(
@@ -634,6 +640,7 @@ def propose_retirement(agent_id: str, body: RetirementProposal):
 @app.get("/agents/{agent_id}/audit")
 def agent_audit(agent_id: str, limit: int = Query(50, ge=1, le=500)):
     with db() as conn:
+        _ensure_agent(conn, agent_id)
         rows = conn.execute(
             "SELECT * FROM audit_log WHERE agent_id=? ORDER BY event_time DESC LIMIT ?",
             (agent_id, limit),
@@ -641,7 +648,10 @@ def agent_audit(agent_id: str, limit: int = Query(50, ge=1, le=500)):
     result = []
     for r in rows:
         d = dict(r)
-        d["payload"] = json.loads(d["payload"])
+        try:
+            d["payload"] = json.loads(d["payload"])
+        except (json.JSONDecodeError, TypeError):
+            d["payload"] = {"_raw": str(d["payload"])}
         result.append(d)
     return result
 
@@ -670,9 +680,96 @@ def global_audit(limit: int = Query(100, ge=1, le=1000)):
     result = []
     for r in rows:
         d = dict(r)
-        d["payload"] = json.loads(d["payload"])
+        try:
+            d["payload"] = json.loads(d["payload"])
+        except (json.JSONDecodeError, TypeError):
+            d["payload"] = {"_raw": str(d["payload"])}
         result.append(d)
     return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Execution Traces — per-call records pushed from agent apps
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TraceCreate(BaseModel):
+    trace_id:       str
+    timestamp:      str               # ISO-8601 UTC string
+    user_input:     Optional[str] = None   # trimmed to 500 chars server-side
+    severity:       Optional[str] = None   # Critical | Major | Minor
+    qa_escalation:  bool = False
+    classification: Optional[str] = None
+    input_tokens:   int = 0
+    output_tokens:  int = 0
+    cost_usd:       float = 0.0
+    latency_ms:     int = 0
+    is_fallback:    bool = False
+    model_output:   Optional[str] = None   # raw JSON string of LLM response
+    source_app:     Optional[str] = None   # e.g. "sop-deviation-review"
+
+
+@app.post("/agents/{agent_id}/traces", status_code=201)
+def ingest_trace(agent_id: str, body: TraceCreate):
+    """
+    Receive a single execution trace from an agent app.
+    Called after every /api/review in the GMP agent.
+    Uses INSERT OR IGNORE on trace_id — safe to call repeatedly.
+    """
+    with db() as conn:
+        _ensure_agent(conn, agent_id)
+        # Trim user_input to 500 chars to avoid bloating the DB with full deviation text.
+        input_excerpt = (body.user_input or "")[:500] or None
+        conn.execute(
+            """INSERT OR IGNORE INTO agent_traces
+               (agent_id, trace_id, timestamp, user_input, severity, qa_escalation,
+                classification, input_tokens, output_tokens, cost_usd, latency_ms,
+                is_fallback, model_output, source_app)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                agent_id, body.trace_id, body.timestamp, input_excerpt,
+                body.severity, int(body.qa_escalation), body.classification,
+                body.input_tokens, body.output_tokens, round(body.cost_usd, 6),
+                body.latency_ms, int(body.is_fallback),
+                body.model_output, body.source_app,
+            ),
+        )
+    return {"trace_id": body.trace_id, "status": "accepted"}
+
+
+@app.get("/agents/{agent_id}/traces")
+def list_traces(
+    agent_id: str,
+    limit:  int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    """
+    Return recent execution traces for an agent, newest first.
+    model_output is returned as parsed JSON when valid, else as raw string.
+    """
+    with db() as conn:
+        _ensure_agent(conn, agent_id)
+        rows = conn.execute(
+            """SELECT * FROM agent_traces
+               WHERE agent_id=?
+               ORDER BY timestamp DESC, id DESC
+               LIMIT ? OFFSET ?""",
+            (agent_id, limit, offset),
+        ).fetchall()
+        total = conn.execute(
+            "SELECT COUNT(*) FROM agent_traces WHERE agent_id=?", (agent_id,)
+        ).fetchone()[0]
+
+    result = []
+    for r in rows:
+        d = dict(r)
+        if d.get("model_output"):
+            try:
+                d["model_output"] = json.loads(d["model_output"])
+            except (json.JSONDecodeError, TypeError):
+                pass  # keep as raw string
+        result.append(d)
+
+    return {"total": total, "traces": result}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
