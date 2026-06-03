@@ -534,7 +534,8 @@ function AgentDetailView({ agentId }) {
   const [editForm, setEditForm] = React.useState({});
   const [showNewVersion, setShowNewVersion] = React.useState(false);
   const [versionStep, setVersionStep] = React.useState(1);
-  const [versionForm, setVersionForm] = React.useState({ version:"", model:"", changelog:"", created_by:"Governance User", eval_threshold:0.80, guardrails:[], golden_rules:[] });
+  const [versionBump, setVersionBump] = React.useState("major");
+  const [versionForm, setVersionForm] = React.useState({ model:"", changelog:"", created_by:"Governance User", eval_threshold:0.80, guardrails:[], golden_rules:[] });
   const [allAgents, setAllAgents] = React.useState([]);
   const [copyFrom, setCopyFrom] = React.useState("");
   const [actionMsg, setActionMsg] = React.useState(null);
@@ -661,9 +662,19 @@ function AgentDetailView({ agentId }) {
     } finally { setSubmitting(false); }
   }
 
+  function bumpVersion(current, type) {
+    if (!current) return "1.0.0";
+    const parts = current.split(".").map(Number);
+    if (type === "major") return `${parts[0]+1}.0.0`;
+    if (type === "minor") return `${parts[0]}.${(parts[1]||0)+1}.0`;
+    if (type === "patch") return `${parts[0]}.${parts[1]||0}.${(parts[2]||0)+1}`;
+    return current;
+  }
+
   async function openNewVersion() {
     setVersionStep(1);
-    setVersionForm({ version:"", model: cls?.model||"", changelog:"", created_by:"Governance User", eval_threshold: cls?.eval_threshold||0.80, guardrails: cls?.guardrails||[], golden_rules: cls?.golden_rules||[] });
+    setVersionBump("major");
+    setVersionForm({ model: cls?.model||"", changelog:"", created_by:"Governance User", eval_threshold: cls?.eval_threshold||0.80, guardrails: cls?.guardrails||[], golden_rules: cls?.golden_rules||[] });
     setCopyFrom("");
     try { const a = await apiFetch("/agents"); setAllAgents(a.filter(a => a.id !== agentId)); } catch(_) {}
     setShowNewVersion(true);
@@ -684,9 +695,11 @@ function AgentDetailView({ agentId }) {
     setSubmitting(true);
     setActionMsg(null);
     try {
+      const activeVer = versions.find(v => v.status === "active");
+      const newVersion = bumpVersion(activeVer?.version || "0.0.0", versionBump);
       const config_snapshot = { eval_threshold: parseFloat(versionForm.eval_threshold), guardrails: versionForm.guardrails, golden_rules: versionForm.golden_rules };
-      await apiFetch(`/agents/${agentId}/versions`, { method:"POST", body: JSON.stringify({ version: versionForm.version, model: versionForm.model, changelog: versionForm.changelog, created_by: versionForm.created_by, config_snapshot }) });
-      setActionMsg({ type:"success", text:`Version ${versionForm.version} created as Draft.` });
+      await apiFetch(`/agents/${agentId}/versions`, { method:"POST", body: JSON.stringify({ version: newVersion, model: versionForm.model, changelog: versionForm.changelog, created_by: versionForm.created_by, config_snapshot }) });
+      setActionMsg({ type:"success", text:`Version ${newVersion} created as Draft.` });
       setShowNewVersion(false);
       load();
     } catch(e) { setActionMsg({ type:"error", text: e.message }); }
@@ -1056,17 +1069,36 @@ function AgentDetailView({ agentId }) {
           </div>
           <form onSubmit={versionStep < 2 ? (e=>{e.preventDefault();setVersionStep(2);}) : submitNewVersion}>
             {versionStep === 1 && (<>
-              <div className="grid-2" style={{gap:10}}>
-                <div className="form-group">
-                  <label>Version Number</label>
-                  <input required placeholder="e.g. 2.0.0" value={versionForm.version}
-                    onChange={e => setVersionForm({...versionForm, version: e.target.value})} />
-                </div>
-                <div className="form-group">
-                  <label>Created By</label>
-                  <input value={versionForm.created_by}
-                    onChange={e => setVersionForm({...versionForm, created_by: e.target.value})} />
-                </div>
+              {/* Version bump selector */}
+              {(() => {
+                const activeVer = versions.find(v => v.status === "active");
+                const nextVer = bumpVersion(activeVer?.version || "0.0.0", versionBump);
+                return (
+                  <div className="card" style={{background:"#f0f4ff",boxShadow:"none",border:"1.5px solid #c5d0f5",marginBottom:16}}>
+                    <div style={{fontSize:12,fontWeight:700,color:"#3b5bdb",marginBottom:10}}>New Version Number (auto-generated)</div>
+                    <div style={{display:"flex",gap:8,marginBottom:12}}>
+                      {["major","minor","patch"].map(t => (
+                        <button key={t} type="button"
+                          onClick={() => setVersionBump(t)}
+                          className={`btn btn-sm ${versionBump===t?"btn-primary":"btn-outline"}`}>
+                          {t.charAt(0).toUpperCase()+t.slice(1)}
+                          <span style={{fontSize:10,opacity:0.8,marginLeft:4}}>
+                            ({bumpVersion(activeVer?.version||"0.0.0", t)})
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:12}}>
+                      <span style={{fontSize:12,color:"#888"}}>{activeVer ? `Current: ${activeVer.version}` : "No active version yet"} →</span>
+                      <span style={{fontSize:22,fontWeight:700,color:"#3b5bdb"}}>{nextVer}</span>
+                    </div>
+                  </div>
+                );
+              })()}
+              <div className="form-group">
+                <label>Created By</label>
+                <input value={versionForm.created_by}
+                  onChange={e => setVersionForm({...versionForm, created_by: e.target.value})} />
               </div>
               <div className="form-group">
                 <label>Primary Model</label>
@@ -1088,12 +1120,24 @@ function AgentDetailView({ agentId }) {
             {versionStep === 2 && (<>
               {/* Copy from agent */}
               <div className="card" style={{background:"#f8f9fa",boxShadow:"none",border:"1.5px dashed #ccc",marginBottom:16}}>
-                <div style={{fontSize:12,fontWeight:700,color:"#555",marginBottom:8}}>⚡ Optional — Copy config from an existing agent</div>
-                <div style={{fontSize:12,color:"#888",marginBottom:10}}>Pre-fills eval threshold, guardrails and golden rules from another agent. You can edit everything after.</div>
+                <div style={{fontSize:12,fontWeight:700,color:"#555",marginBottom:6}}>⚡ Copy config from an existing agent <span style={{fontWeight:400,color:"#aaa"}}>(optional)</span></div>
+                <div style={{fontSize:12,color:"#888",marginBottom:10}}>Pre-fills eval threshold, guardrails and golden rules. You can edit everything after.</div>
                 <select value={copyFrom} onChange={e => handleCopyFrom(e.target.value)}>
-                  <option value="">— start fresh —</option>
-                  {allAgents.map(a => <option key={a.id} value={a.id}>{a.name} ({a.id})</option>)}
+                  <option value="">✦ Start Fresh — all blank</option>
+                  {allAgents.map(a => {
+                    const c = typeof a.classification === "string" ? JSON.parse(a.classification) : (a.classification || {});
+                    return (
+                      <option key={a.id} value={a.id}>
+                        {a.name} · {a.current_stage} · {c.model || "no model"} · {c.product || a.id}
+                      </option>
+                    );
+                  })}
                 </select>
+                {copyFrom && (
+                  <div style={{marginTop:8,fontSize:11,color:"#2f9e44"}}>
+                    ✓ Config pre-filled from selected agent — review and edit below
+                  </div>
+                )}
               </div>
               <div className="form-group">
                 <label>Eval Pass Threshold (%)</label>
