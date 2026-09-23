@@ -2869,12 +2869,12 @@ function App() {
       <nav className="nav">
         <span className="nav-brand">AgentOps: Cradle to Grave</span>
         <span className={`nav-link ${view==="registry"?"active":""}`} onClick={() => setView("registry")}>Registry</span>
-        <span className={`nav-link ${view==="queue"?"active":""}`} onClick={() => setView("queue")}>Governance Queue</span>
         {selectedAgent && (
           <span className={`nav-link ${view==="detail"?"active":""}`} onClick={() => setView("detail")}>
             Agent Detail
           </span>
         )}
+        <span className={`nav-link ${view==="queue"?"active":""}`} onClick={() => setView("queue")}>Governance Queue</span>
         <div className="nav-user">
           <span className="nav-username">👤 {username}</span>
           <button className="nav-logout" onClick={handleLogout}>Sign out</button>

@@ -30,5 +30,7 @@ conn.commit()
 conn.close()
 print("  OK All tables cleared")
 
-from seed import seed
+from seed import seed, seed_medassist, seed_gmp_traces
 seed()
+seed_medassist()
+seed_gmp_traces()

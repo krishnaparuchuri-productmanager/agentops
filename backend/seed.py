@@ -361,5 +361,283 @@ def seed():
     print()
 
 
+def seed_medassist():
+    """Seed all 6 MediAssist agents with realistic lifecycle, cost, and trace data."""
+    import uuid as _uuid
+
+    MEDASSIST_AGENTS = [
+        {
+            "id": "medassist-router",
+            "name": "MediAssist Router",
+            "description": "Orchestration router for the MediAssist clinical workflow system. Classifies each clinical request by task_type and delegates to the appropriate specialist agent with the correct model and enforced system prompt.",
+            "owner": "Clinical AI Team / Krishna Paruchuri",
+            "stage": "In Production",
+            "model": "claude-haiku-4-5",
+            "days_live": 18,
+            "daily_calls": 110,   # all traffic passes through the router
+            "cost_per_call": 0.00018,
+            "input_per_call": 600,
+            "output_per_call": 180,
+            "latency_avg_ms": 420,
+            "pii_access": True,
+            "production_critical": True,
+        },
+        {
+            "id": "medassist-scheduler",
+            "name": "MediAssist Scheduler",
+            "description": "Appointment scheduling and patient registration specialist. Handles scheduling requests and new patient intake.",
+            "owner": "Clinical AI Team / Krishna Paruchuri",
+            "stage": "In Production",
+            "model": "claude-haiku-4-5",
+            "days_live": 18,
+            "daily_calls": 38,
+            "cost_per_call": 0.00022,
+            "input_per_call": 720,
+            "output_per_call": 210,
+            "latency_avg_ms": 380,
+            "pii_access": True,
+            "production_critical": True,
+        },
+        {
+            "id": "medassist-scribe",
+            "name": "MediAssist Scribe",
+            "description": "Clinical SOAP note generation specialist. Converts physician dictation into structured SOAP notes. Always includes chief_complaint, HPI, assessment, and plan. Never provides a definitive diagnosis.",
+            "owner": "Clinical AI Team / Krishna Paruchuri",
+            "stage": "Under Monitoring",
+            "model": "claude-sonnet-4-6",
+            "days_live": 10,
+            "daily_calls": 22,
+            "cost_per_call": 0.0019,
+            "input_per_call": 2400,
+            "output_per_call": 950,
+            "latency_avg_ms": 1840,
+            "pii_access": True,
+            "production_critical": True,
+        },
+        {
+            "id": "medassist-orders",
+            "name": "MediAssist Orders",
+            "description": "Diagnostic order mapping specialist. Maps clinical requests to LOINC codes with explicit priority levels. Every order includes a LOINC code and priority (high/medium/low).",
+            "owner": "Clinical AI Team / Krishna Paruchuri",
+            "stage": "Approved",
+            "model": "claude-haiku-4-5",
+            "days_live": 0,
+            "daily_calls": 0,
+            "cost_per_call": 0.00025,
+            "input_per_call": 800,
+            "output_per_call": 280,
+            "latency_avg_ms": 510,
+            "pii_access": False,
+            "production_critical": True,
+        },
+        {
+            "id": "medassist-results",
+            "name": "MediAssist Results",
+            "description": "Lab and imaging result analysis specialist. Always flags critical values with status=CRITICAL and always includes follow_up_suggestions for abnormal results.",
+            "owner": "Clinical AI Team / Krishna Paruchuri",
+            "stage": "In Production",
+            "model": "claude-sonnet-4-6",
+            "days_live": 12,
+            "daily_calls": 30,
+            "cost_per_call": 0.0021,
+            "input_per_call": 2800,
+            "output_per_call": 820,
+            "latency_avg_ms": 1620,
+            "pii_access": True,
+            "production_critical": True,
+        },
+        {
+            "id": "medassist-billing",
+            "name": "MediAssist Billing",
+            "description": "ICD-10/CPT medical coding specialist. Outputs only codes substantiated by documented clinical findings and always runs denial risk analysis.",
+            "owner": "Clinical AI Team / Krishna Paruchuri",
+            "stage": "Under Review",
+            "model": "claude-sonnet-4-6",
+            "days_live": 0,
+            "daily_calls": 0,
+            "cost_per_call": 0.0017,
+            "input_per_call": 2100,
+            "output_per_call": 680,
+            "latency_avg_ms": 1390,
+            "pii_access": True,
+            "production_critical": False,
+        },
+    ]
+
+    # Stage → lifecycle path (days_ago for each transition)
+    STAGE_PATHS = {
+        "In Production":    [("Proposed",-28),("Under Review",-24),("Approved",-20),("In Production",-18)],
+        "Under Monitoring": [("Proposed",-22),("Under Review",-18),("Approved",-14),("Under Monitoring",-10)],
+        "Approved":         [("Proposed",-18),("Under Review",-14),("Approved",-10)],
+        "Under Review":     [("Proposed",-12),("Under Review",-8)],
+    }
+
+    SEVERITY_LABELS = ["Critical","Major","Major","Minor","Minor","Minor"]
+    TASK_TYPES = {
+        "medassist-router":    ["registration","scheduling","scribe","orders","results","billing"],
+        "medassist-scheduler": ["registration","scheduling"],
+        "medassist-scribe":    ["scribe"],
+        "medassist-orders":    ["orders"],
+        "medassist-results":   ["results"],
+        "medassist-billing":   ["billing"],
+    }
+
+    with db() as conn:
+        now = datetime.utcnow()
+
+        for ag in MEDASSIST_AGENTS:
+            aid = ag["id"]
+            existing = conn.execute("SELECT id FROM agents WHERE id=?", (aid,)).fetchone()
+            if existing:
+                print(f"  Agent '{aid}' already exists — skipping.")
+                continue
+
+            # 1. Register agent
+            conn.execute(
+                """INSERT INTO agents(id, name, description, owner, classification, current_stage, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (
+                    aid, ag["name"], ag["description"], ag["owner"],
+                    json.dumps({
+                        "pii_access": ag["pii_access"],
+                        "production_critical": ag["production_critical"],
+                        "regulated_domain": True,
+                        "data_classification": "confidential",
+                        "escalates_to_human": True,
+                        "domain": "Clinical",
+                        "model": ag["model"],
+                    }),
+                    ag["stage"],
+                    (now - timedelta(days=30)).isoformat(timespec="seconds"),
+                    now.isoformat(timespec="seconds"),
+                ),
+            )
+
+            # 2. Version
+            conn.execute(
+                """INSERT INTO agent_versions(agent_id, version, model, config_snapshot, created_at, created_by)
+                   VALUES (?,?,?,?,?,?)""",
+                (
+                    aid, "1.0.0", ag["model"],
+                    json.dumps({"domain": "Clinical", "model": ag["model"]}),
+                    (now - timedelta(days=30)).isoformat(timespec="seconds"),
+                    "Krishna Paruchuri",
+                ),
+            )
+
+            # 3. Lifecycle transitions
+            path = STAGE_PATHS.get(ag["stage"], [("Proposed", -28)])
+            prev = None
+            for (stage, days_ago) in path:
+                conn.execute(
+                    "INSERT INTO lifecycle_transitions(agent_id, from_stage, to_stage, triggered_by, reason, transitioned_at) VALUES (?,?,?,?,?,?)",
+                    (aid, prev, stage, "Governance Lead", f"Transition to {stage}", (now + timedelta(days=days_ago)).isoformat(timespec="seconds")),
+                )
+                prev = stage
+
+            # 4. Cost records (last 7 days — only for live agents)
+            if ag["daily_calls"] > 0:
+                for days_ago in range(1, 8):
+                    is_weekend = (now - timedelta(days=days_ago)).weekday() >= 5
+                    factor = 0.45 if is_weekend else 1.0
+                    calls = int(ag["daily_calls"] * factor)
+                    it = int(ag["input_per_call"] * calls)
+                    ot = int(ag["output_per_call"] * calls)
+                    cost = round(ag["cost_per_call"] * calls, 6)
+                    d = (now - timedelta(days=days_ago)).strftime("%Y-%m-%d")
+                    conn.execute(
+                        """INSERT OR IGNORE INTO cost_records(agent_id, recorded_date, total_tokens, input_tokens, output_tokens, cost_usd, review_count)
+                           VALUES (?,?,?,?,?,?,?)""",
+                        (aid, d, it + ot, it, ot, cost, calls),
+                    )
+
+            # 5. Traces (last 3 days, ~10 per day for live agents)
+            if ag["daily_calls"] > 0:
+                task_opts = TASK_TYPES.get(aid, ["general"])
+                for days_ago in range(1, 4):
+                    sample_count = min(10, int(ag["daily_calls"] * 0.09))
+                    for i in range(sample_count):
+                        mins_offset = (i * 87 + days_ago * 1440)
+                        ts = (now - timedelta(minutes=mins_offset)).isoformat(timespec="seconds")
+                        sev = SEVERITY_LABELS[i % len(SEVERITY_LABELS)] if aid == "gmp-deviation-review" else None
+                        task = task_opts[i % len(task_opts)]
+                        latency = ag["latency_avg_ms"] + (i % 7) * 40 - 100
+                        conn.execute(
+                            """INSERT OR IGNORE INTO agent_traces(agent_id, trace_id, timestamp, severity, qa_escalation,
+                               classification, input_tokens, output_tokens, cost_usd, latency_ms, source_app)
+                               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                            (
+                                aid,
+                                str(_uuid.uuid4()),
+                                ts,
+                                sev,
+                                1 if (sev == "Critical") else 0,
+                                task,
+                                ag["input_per_call"] + (i % 5) * 30,
+                                ag["output_per_call"] + (i % 3) * 20,
+                                round(ag["cost_per_call"] * (1 + (i % 4) * 0.05), 6),
+                                max(200, latency),
+                                aid,
+                            ),
+                        )
+
+            print(f"  ✓ {aid} ({ag['stage']})")
+
+    print("\nOK MediAssist agents seeded.")
+
+
+def seed_gmp_traces():
+    """Add trace records for gmp-deviation-review (last 3 days, realistic deviation cases)."""
+    import uuid as _uuid
+
+    GMP_CASES = [
+        ("Critical", "Temperature excursion 11°C detected in cold-chain storage unit B-04", 1),
+        ("Major",    "Batch record incomplete — operator signature missing on step 7", 0),
+        ("Minor",    "Environmental monitoring: particle count marginally above alert limit", 0),
+        ("Critical", "OOS result on finished product potency — released batch recalled",   1),
+        ("Major",    "SOP not followed: deprecated SOP-QA-018 Rev 2 used instead of Rev 5", 0),
+        ("Minor",    "Mixing speed 10 RPM below lower control limit for 8 minutes", 0),
+        ("Major",    "Label reconciliation discrepancy: 12 labels unaccounted after batch", 0),
+        ("Critical", "Cross-contamination risk: wrong batch label in open vessel staging area", 1),
+        ("Minor",    "Water system TOC above alert limit — conductivity within spec", 0),
+        ("Major",    "HVAC filter differential pressure below minimum — cleanroom risk", 0),
+    ]
+
+    with db() as conn:
+        existing = conn.execute("SELECT id FROM agents WHERE id='gmp-deviation-review'").fetchone()
+        if not existing:
+            print("  gmp-deviation-review not found — skipping traces.")
+            return
+
+        now = datetime.utcnow()
+        for days_ago in range(1, 4):
+            for i, (sev, desc, escalated) in enumerate(GMP_CASES):
+                mins_offset = days_ago * 1440 + i * 97
+                ts = (now - timedelta(minutes=mins_offset)).isoformat(timespec="seconds")
+                conn.execute(
+                    """INSERT OR IGNORE INTO agent_traces(agent_id, trace_id, timestamp, severity, qa_escalation,
+                       classification, input_tokens, output_tokens, cost_usd, latency_ms, source_app, user_input)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        "gmp-deviation-review",
+                        str(_uuid.uuid4()),
+                        ts,
+                        sev,
+                        escalated,
+                        "deviation-review",
+                        4800 + i * 45,
+                        1100 + i * 30,
+                        round(0.00265 + i * 0.00008, 6),
+                        780 + i * 35,
+                        "gmp-deviation-review",
+                        desc[:120],
+                    ),
+                )
+    print("  ✓ gmp-deviation-review traces added")
+
+
 if __name__ == "__main__":
     seed()
+    seed_medassist()
+    seed_gmp_traces()
+    print("\nAll done.")

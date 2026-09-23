@@ -57,8 +57,10 @@ def startup():
     count = conn.execute("SELECT COUNT(*) FROM agents").fetchone()[0]
     conn.close()
     if count == 0:
-        from seed import seed
+        from seed import seed, seed_medassist, seed_gmp_traces
         seed()
+        seed_medassist()
+        seed_gmp_traces()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
