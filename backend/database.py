@@ -253,3 +253,117 @@ def migrate_db():
                 );
                 CREATE INDEX IF NOT EXISTS idx_traces_agent ON agent_traces(agent_id, timestamp);
             """)
+
+        _backfill_approver_names(conn)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  One-time data fix: replace placeholder maker/checker identities
+#  ('seed-script', 'Governance Lead') on seeded approvals with named users,
+#  keeping approval_requests, audit_log and lifecycle_transitions consistent.
+#  Idempotent — only matches rows that still carry the placeholder values.
+# ─────────────────────────────────────────────────────────────────────────────
+_MAKERS = {
+    "medassist-router":    "Anjali Mehta",
+    "medassist-scheduler": "Anjali Mehta",
+    "medassist-scribe":    "Dr. Michael Torres",
+    "medassist-results":   "Dr. Michael Torres",
+    "medassist-orders":    "Dr. Michael Torres",
+    "medassist-billing":   "Anjali Mehta",
+}
+_CHECKERS = {  # (from_stage, to_stage) → checker
+    ("Under Review",     "Approved"):         "Sarah Mitchell",
+    ("Approved",         "Under Monitoring"): "Rajesh Iyer",
+    ("Under Monitoring", "In Production"):    "Dr. Emily Chen",
+}
+_GMP_CHECKER = "Laura Bennett"
+_COMMENTS = {  # (from_stage, to_stage) → (maker notes, checker reason)
+    ("Under Review", "Approved"): (
+        "Golden-set eval meets threshold. Guardrails and golden rules reviewed with clinical SMEs; "
+        "PHI handling verified. Requesting approval to start shadow deployment.",
+        "Eval evidence and guardrail coverage reviewed. Segregation of PHI confirmed. "
+        "Approved for shadow deployment.",
+    ),
+    ("Approved", "Under Monitoring"): (
+        "Shadow run complete — 2 weeks of mirrored traffic, no guardrail breaches. Cost alerts and "
+        "monitoring dashboards configured. Requesting limited rollout under monitoring.",
+        "Monitoring, alerting and rollback plan verified. Approved for limited rollout under monitoring.",
+    ),
+    ("Under Monitoring", "In Production"): (
+        "Monitored rollout stable — latency, cost and escalation rates within targets; no open critical "
+        "alerts. Requesting full production release.",
+        "Clinical sign-off received and metrics reviewed against SLOs. Approved for full production "
+        "with weekly eval regression.",
+    ),
+}
+
+
+def _backfill_approver_names(conn):
+    rows = conn.execute(
+        "SELECT id, agent_id, from_stage, to_stage FROM approval_requests WHERE proposed_by='seed-script'"
+    ).fetchall()
+    for req_id, agent_id, frm, to in rows:
+        maker = _MAKERS.get(agent_id, "Anjali Mehta")
+        checker = _CHECKERS.get((frm, to), "Sarah Mitchell")
+        notes, reason = _COMMENTS.get((frm, to), (None, None))
+        conn.execute(
+            """UPDATE approval_requests
+               SET proposed_by=?, notes=COALESCE(?, notes),
+                   reviewed_by=CASE WHEN reviewed_by='seed-script' THEN ? ELSE reviewed_by END,
+                   reason=CASE WHEN reviewed_by='seed-script' THEN COALESCE(?, reason) ELSE reason END
+               WHERE id=?""",
+            (maker, notes, checker, reason, req_id),
+        )
+        _backfill_audit(conn, agent_id, req_id, frm, to, maker, checker, notes, reason, "seed-script")
+        conn.execute(
+            """UPDATE lifecycle_transitions SET triggered_by=?
+               WHERE agent_id=? AND from_stage=? AND to_stage=? AND triggered_by IN ('seed-script', 'Governance Lead')""",
+            (checker, agent_id, frm, to),
+        )
+
+    # Remaining seeded actions with no approval (registration, Proposed → Under Review)
+    # were performed by the agent's owner, i.e. the maker.
+    for agent_id, maker in _MAKERS.items():
+        conn.execute("UPDATE audit_log SET actor=? WHERE agent_id=? AND actor='seed-script'", (maker, agent_id))
+        conn.execute(
+            "UPDATE lifecycle_transitions SET triggered_by=? WHERE agent_id=? AND triggered_by='seed-script'",
+            (maker, agent_id),
+        )
+
+    gmp = conn.execute(
+        """SELECT id, from_stage, to_stage FROM approval_requests
+           WHERE agent_id='gmp-deviation-review' AND reviewed_by='Governance Lead'"""
+    ).fetchall()
+    for req_id, frm, to in gmp:
+        conn.execute("UPDATE approval_requests SET reviewed_by=? WHERE id=?", (_GMP_CHECKER, req_id))
+        _backfill_audit(conn, "gmp-deviation-review", req_id, frm, to, None, _GMP_CHECKER, None, None, "Governance Lead")
+        conn.execute(
+            """UPDATE lifecycle_transitions SET triggered_by=?
+               WHERE agent_id='gmp-deviation-review' AND from_stage=? AND to_stage=? AND triggered_by='Governance Lead'""",
+            (_GMP_CHECKER, frm, to),
+        )
+
+
+def _backfill_audit(conn, agent_id, req_id, frm, to, maker, checker, notes, reason, placeholder):
+    import json
+
+    events = conn.execute(
+        """SELECT id, action, payload FROM audit_log
+           WHERE agent_id=? AND actor=? AND action IN ('APPROVAL_REQUESTED', 'APPROVAL_DECIDED', 'STAGE_TRANSITION')""",
+        (agent_id, placeholder),
+    ).fetchall()
+    for ev_id, action, raw in events:
+        try:
+            p = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        if action == "APPROVAL_REQUESTED" and p.get("request_id") == req_id and maker:
+            if notes:
+                p["notes"] = notes
+            conn.execute("UPDATE audit_log SET actor=?, payload=? WHERE id=?", (maker, json.dumps(p), ev_id))
+        elif action == "APPROVAL_DECIDED" and p.get("request_id") == req_id:
+            if reason:
+                p["reason"] = reason
+            conn.execute("UPDATE audit_log SET actor=?, payload=? WHERE id=?", (checker, json.dumps(p), ev_id))
+        elif action == "STAGE_TRANSITION" and p.get("from") == frm and p.get("to") == to:
+            conn.execute("UPDATE audit_log SET actor=? WHERE id=?", (checker, ev_id))
