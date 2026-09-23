@@ -342,6 +342,12 @@ def _backfill_approver_names(conn):
                WHERE agent_id='gmp-deviation-review' AND from_stage=? AND to_stage=? AND triggered_by='Governance Lead'""",
             (_GMP_CHECKER, frm, to),
         )
+    # seed.py wrote GMP APPROVAL_DECIDED payloads without request_id; both have the same checker.
+    conn.execute(
+        """UPDATE audit_log SET actor=?
+           WHERE agent_id='gmp-deviation-review' AND actor='Governance Lead' AND action='APPROVAL_DECIDED'""",
+        (_GMP_CHECKER,),
+    )
 
 
 def _backfill_audit(conn, agent_id, req_id, frm, to, maker, checker, notes, reason, placeholder):
