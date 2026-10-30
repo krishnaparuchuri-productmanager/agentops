@@ -180,7 +180,7 @@ Cloudflare Worker  (worker.js)
 | Frontend | Single-file React 18 SPA (no build), served as static assets by the same Worker |
 | MediAssist proxy | Cloudflare Worker (`worker.js`) |
 | Observability | LangSmith (APAC region endpoint) |
-| GMP backend | FastAPI + SQLite, Railway |
+| GMP backend | FastAPI + SQLite ([sop-deviation-review](https://github.com/krishnaparuchuri-productmanager/sop-deviation-review)) |
 
 ---
 
