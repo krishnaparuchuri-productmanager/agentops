@@ -1100,10 +1100,10 @@ function AgentDetailView({ agentId, onSelectAgent }) {
             const sevBorder= { critical:"#fca5a5", warning:"#fde68a", info:"#bfdbfe" };
             const sevColor = { critical:"#991b1b", warning:"#92400e", info:"#1e40af" };
             return (
-              <div className="card" style={{marginBottom:16, borderLeft:"4px solid #e03131"}}>
+              <div className="card" style={{marginBottom:16, borderLeft:`4px solid ${active.length ? "#e03131" : "#2f9e44"}`}}>
                 <div className="card-header" style={{marginBottom: active.length ? 12 : 0}}>
                   <div className="card-title">
-                    🚨 Active Alerts
+                    {active.length ? "🚨 Active Alerts" : "✅ Alerts"}
                     {active.length > 0 && <span style={{marginLeft:8,background:"#e03131",color:"#fff",borderRadius:8,padding:"2px 8px",fontSize:11}}>{active.length} active</span>}
                     {resolved.length > 0 && <span style={{marginLeft:6,background:"#e5e7eb",color:"#6b7280",borderRadius:8,padding:"2px 8px",fontSize:11}}>{resolved.length} resolved</span>}
                   </div>
