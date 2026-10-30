@@ -12,7 +12,7 @@ What it pushes (for all 7 agents):
 Pricing (per 1M tokens):  Haiku 4.5 $1 in / $5 out · Sonnet 4.6 $3 in / $15 out
 
 Usage:
-  python push_seed_data.py                      # pushes to production Railway
+  python push_seed_data.py                      # pushes to production (Cloudflare)
   python push_seed_data.py --env local          # pushes to localhost:8000
   python push_seed_data.py --skip-audit         # costs + traces only
 """
@@ -22,7 +22,7 @@ from urllib import request as urlrequest
 from urllib.error import HTTPError, URLError
 
 ENVS = {
-    "production": "https://agentops-production-980c.up.railway.app",
+    "production": "https://agentops.krishnaparuchuri.com/api",
     "local":      "http://localhost:8000",
 }
 
@@ -171,6 +171,8 @@ def api(base, method, path, body=None, retries=3):
     for attempt in range(1, retries + 1):
         req = urlrequest.Request(url, data=data, method=method)
         req.add_header("Content-Type", "application/json")
+        # Cloudflare blocks the default "Python-urllib" User-Agent (error 1010)
+        req.add_header("User-Agent", "agentops-push-seed-data/1.0")
         try:
             with urlrequest.urlopen(req, timeout=30) as r:
                 return json.loads(r.read())

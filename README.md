@@ -129,9 +129,9 @@ Each specialist has an enforced system prompt with clinical guardrails:
 
 ```
 Browser (React 18, single-file SPA — no build step)
-    │  REST API
+    │  REST API (same origin, /api)
     ▼
-FastAPI backend  (Railway — https://agentops-production-980c.up.railway.app)
+Cloudflare Worker  (worker/index.ts — https://agentops.krishnaparuchuri.com/api)
     ├── GET/POST  /agents                       registry CRUD
     ├── POST      /agents/{id}/transitions      lifecycle state machine
     ├── POST      /agents/{id}/approvals        maker-checker approval requests
@@ -143,7 +143,7 @@ FastAPI backend  (Railway — https://agentops-production-980c.up.railway.app)
     └── GET       /agents/{id}/audit            immutable audit log
     │
     ▼
-SQLite (WAL mode)
+Cloudflare D1 (SQLite — schema in migrations/)
     ├── agents              — registry + classification JSON
     ├── agent_versions      — version history
     ├── lifecycle_transitions
@@ -176,8 +176,8 @@ Cloudflare Worker  (worker.js)
 
 | Layer | Technology |
 |---|---|
-| Backend | FastAPI + SQLite (WAL), deployed on Railway |
-| Frontend | Single-file React 18 SPA (no build), Cloudflare Workers |
+| Backend | TypeScript Cloudflare Worker + D1 (`worker/`, `migrations/`); the original FastAPI + SQLite version in `backend/` is kept for local development |
+| Frontend | Single-file React 18 SPA (no build), served as static assets by the same Worker |
 | MediAssist proxy | Cloudflare Worker (`worker.js`) |
 | Observability | LangSmith (APAC region endpoint) |
 | GMP backend | FastAPI + SQLite, Railway |
@@ -232,14 +232,14 @@ See [`DECISIONS.md`](DECISIONS.md) for full rationale. Summary:
 
 | Service | Platform | URL |
 |---|---|---|
-| AgentOps backend | Railway | `https://agentops-production-980c.up.railway.app` |
-| AgentOps dashboard | Cloudflare Workers | `https://agentops.krishnaparuchuri.com` |
+| AgentOps dashboard + API | Cloudflare Workers + D1 | `https://agentops.krishnaparuchuri.com` (API under `/api`) |
 | MediAssist AI | Cloudflare Workers | `https://medassist-ai.krishna1parchuri.workers.dev` |
 | GMP Deviation Review | Cloudflare Workers | `https://gmpdeviationreview.krishnaparuchuri.com` |
 
 ```bash
-# Deploy AgentOps frontend
-cd frontend && npx wrangler deploy
+# Deploy AgentOps (frontend + API Worker), from the repo root
+npx wrangler d1 migrations apply agentops --remote   # only when migrations/ changed
+npx wrangler deploy
 
 # Deploy MediAssist
 cd "MedAssist AI" && npm run build && npx wrangler deploy

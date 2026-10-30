@@ -9,7 +9,7 @@ Run this from the agent's own CI/CD pipeline or as a one-time registration step.
 
 Usage:
   python push_agent_data.py --env local           # local dev (localhost:8000)
-  python push_agent_data.py --env production      # Railway deployment
+  python push_agent_data.py --env production      # Cloudflare deployment
   python push_agent_data.py --step register       # only register agent
   python push_agent_data.py --step eval           # only push eval results
   python push_agent_data.py --step cost           # only push cost records
@@ -32,7 +32,7 @@ from urllib.error import HTTPError
 
 ENVS = {
     "local":      "http://localhost:8000",
-    "production": "https://agentops-production.up.railway.app",
+    "production": "https://agentops.krishnaparuchuri.com/api",
 }
 
 AGENT_ID = os.environ.get("AGENTOPS_AGENT_ID", "gmp-deviation-review")
@@ -173,6 +173,8 @@ def api_call(base_url: str, method: str, path: str, body: dict = None):
     data = json.dumps(body).encode() if body else None
     req = urlrequest.Request(url, data=data, method=method)
     req.add_header("Content-Type", "application/json")
+    # Cloudflare blocks the default "Python-urllib" User-Agent (error 1010)
+    req.add_header("User-Agent", "agentops-push-agent-data/1.0")
     try:
         with urlrequest.urlopen(req, timeout=15) as resp:
             result = json.loads(resp.read())
