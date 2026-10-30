@@ -159,6 +159,9 @@ class CostRecord(BaseModel):
     output_tokens: int = 0
     cost_usd: float = 0.0
     review_count: int = 0
+    # "replace" (default) sets the day's totals — used by rollup/seed scripts.
+    # "add" accumulates onto the day's totals — used by apps reporting one call at a time.
+    mode: str = Field("replace", pattern="^(replace|add)$")
 
 
 class RetirementProposal(BaseModel):
@@ -565,21 +568,21 @@ def get_costs(agent_id: str, days: int = Query(30, ge=1, le=365)):
 
 @app.post("/agents/{agent_id}/costs", status_code=201)
 def upsert_cost(agent_id: str, body: CostRecord):
+    add = body.mode == "add"
+    cols = ["total_tokens", "input_tokens", "output_tokens", "cost_usd", "review_count"]
+    # Column names come from the fixed list above, never from user input.
+    set_clause = ",\n                 ".join(f"{c}={c}+excluded.{c}" if add else f"{c}=excluded.{c}" for c in cols)
     with db() as conn:
         _ensure_agent(conn, agent_id)
         conn.execute(
-            """INSERT INTO cost_records(agent_id, recorded_date, total_tokens, input_tokens, output_tokens, cost_usd, review_count)
+            f"""INSERT INTO cost_records(agent_id, recorded_date, total_tokens, input_tokens, output_tokens, cost_usd, review_count)
                VALUES (?,?,?,?,?,?,?)
                ON CONFLICT(agent_id, recorded_date) DO UPDATE SET
-                 total_tokens=excluded.total_tokens,
-                 input_tokens=excluded.input_tokens,
-                 output_tokens=excluded.output_tokens,
-                 cost_usd=excluded.cost_usd,
-                 review_count=excluded.review_count""",
+                 {set_clause}""",
             (agent_id, body.recorded_date, body.total_tokens, body.input_tokens,
              body.output_tokens, body.cost_usd, body.review_count),
         )
-    return {"status": "upserted", "date": body.recorded_date}
+    return {"status": "added" if add else "upserted", "date": body.recorded_date}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

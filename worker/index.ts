@@ -477,19 +477,20 @@ const upsertCost: Handler = async ({ env, params, body }) => {
     recorded_date: str(true), total_tokens: { type: "int", default: 0 }, input_tokens: { type: "int", default: 0 },
     output_tokens: { type: "int", default: 0 }, cost_usd: { type: "float", default: 0 },
     review_count: { type: "int", default: 0 },
+    // "replace" (default) sets the day's totals — used by rollup/seed scripts.
+    // "add" accumulates onto the day's totals — used by apps reporting one call at a time.
+    mode: str(false, "replace", /^(replace|add)$/),
   });
   await ensureAgent(env, agentId);
+  const add = b.mode === "add";
+  const col = (c: string) => (add ? `${c}=${c}+excluded.${c}` : `${c}=excluded.${c}`);
   await env.DB.prepare(
     `INSERT INTO cost_records(agent_id, recorded_date, total_tokens, input_tokens, output_tokens, cost_usd, review_count)
      VALUES (?,?,?,?,?,?,?)
      ON CONFLICT(agent_id, recorded_date) DO UPDATE SET
-       total_tokens=excluded.total_tokens,
-       input_tokens=excluded.input_tokens,
-       output_tokens=excluded.output_tokens,
-       cost_usd=excluded.cost_usd,
-       review_count=excluded.review_count`,
+       ${["total_tokens", "input_tokens", "output_tokens", "cost_usd", "review_count"].map(col).join(",\n       ")}`,
   ).bind(agentId, b.recorded_date, b.total_tokens, b.input_tokens, b.output_tokens, b.cost_usd, b.review_count).run();
-  return json({ status: "upserted", date: b.recorded_date }, 201);
+  return json({ status: add ? "added" : "upserted", date: b.recorded_date }, 201);
 };
 
 // ── Retirement workflow ──
