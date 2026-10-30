@@ -1,13 +1,23 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "agentops",
+  "main": "worker/index.ts",
   "compatibility_date": "2026-06-02",
   "observability": {
     "enabled": true
   },
+  // Static frontend; the Worker only runs for paths that don't match a file (i.e. the API).
   "assets": {
     "directory": "frontend"
   },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "agentops",
+      "database_id": "4bbaeb7d-8414-479d-9272-df7449b1b8c3",
+      "migrations_dir": "migrations"
+    }
+  ],
   "compatibility_flags": [
     "nodejs_compat"
   ]

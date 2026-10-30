@@ -1,4 +1,3 @@
 // AgentOps — production API config
-// This file is served by Cloudflare Pages.
-// Replace the URL below with your Railway/Render backend URL after deploying.
-window.AGENTOPS_API = "https://agentops-production-980c.up.railway.app";
+// The API is served by the same Cloudflare Worker as this page (worker/index.ts), under /api.
+window.AGENTOPS_API = window.location.origin + "/api";
